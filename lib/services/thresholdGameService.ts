@@ -1,0 +1,186 @@
+import client from '@/lib/client';
+import {
+    DistributionCycleCurrentResponse,
+    DistributionGameActiveResponse,
+    DistributionGameSubmissionState,
+    SubmitDistributionGameAnswerPayload,
+    SubmitDistributionGameAnswerResponse,
+} from '@/types/threshold-game.types';
+
+type Envelope<T> = {
+    success?: boolean;
+    data?: T;
+};
+
+export type ThresholdGameApiError = Error & {
+    status?: number;
+    data?: unknown;
+};
+
+const unwrap = <T>(payload: T | Envelope<T>): T => {
+    if (payload && typeof payload === 'object' && 'data' in (payload as Record<string, unknown>)) {
+        const data = (payload as Envelope<T>).data;
+        if (data !== undefined) return data;
+    }
+    return payload as T;
+};
+
+const extractFirstErrorText = (value: unknown): string | null => {
+    if (typeof value === 'string' && value.trim().length > 0) return value.trim();
+    if (Array.isArray(value)) {
+        for (const item of value) {
+            const found = extractFirstErrorText(item);
+            if (found) return found;
+        }
+        return null;
+    }
+    if (value && typeof value === 'object') {
+        for (const nested of Object.values(value as Record<string, unknown>)) {
+            const found = extractFirstErrorText(nested);
+            if (found) return found;
+        }
+    }
+    return null;
+};
+
+const toApiErrorMessage = (error: any): string => {
+    const status = error?.response?.status;
+    const data = error?.response?.data;
+    const requestUrl = String(error?.config?.url || '');
+    const detail =
+        extractFirstErrorText(data?.error?.details?.error?.details) ||
+        extractFirstErrorText(data?.error?.details?.error?.message) ||
+        extractFirstErrorText(data?.error?.details?.message) ||
+        extractFirstErrorText(data?.error?.details) ||
+        extractFirstErrorText(data?.error?.message) ||
+        extractFirstErrorText(data?.detail) ||
+        extractFirstErrorText(data?.message) ||
+        extractFirstErrorText(data?.error) ||
+        error?.message ||
+        'Request failed.';
+
+    if (status === 409) return 'You already submitted an answer for this game.';
+    if (status === 422) return 'Game is not open for submissions.';
+    if (status === 403 && requestUrl.includes('/admin/testing/cycles/')) {
+        return 'You do not have permission to run staging simulation endpoints. Use an admin account/token.';
+    }
+    if (status === 404 && requestUrl.includes('/admin/testing/cycles/')) {
+        return 'Testing simulation endpoint is not available on this backend environment (404).';
+    }
+    if (status === 403) {
+        return 'You are not eligible for this cycle. You need a qualifying contribution/payment in this cycle before you can play the threshold game.';
+    }
+    if (status === 404) return 'No active threshold game found right now.';
+    if (status === 400) return typeof detail === 'string' ? detail : 'Invalid answer payload.';
+    return typeof detail === 'string' ? detail : 'Request failed.';
+};
+
+const toApiError = (error: any): ThresholdGameApiError => {
+    const apiError = new Error(toApiErrorMessage(error)) as ThresholdGameApiError;
+    apiError.status = error?.response?.status;
+    apiError.data = error?.response?.data;
+    return apiError;
+};
+
+const postCycleSimulationWithFallback = async (
+    cycleId: string,
+    suffix: 'simulate-threshold-met' | 'simulate-game-close' | 'simulate-rollover'
+): Promise<DistributionCycleCurrentResponse> => {
+    const encodedId = encodeURIComponent(cycleId);
+    const candidatePaths = [
+        `/admin/testing/cycles/${encodedId}/${suffix}/`,
+        `/distribution/admin/testing/cycles/${encodedId}/${suffix}/`,
+        `/distribution/testing/cycles/${encodedId}/${suffix}/`,
+    ];
+
+    let lastError: any = null;
+    for (const path of candidatePaths) {
+        try {
+            const response = await client.post<
+                Envelope<DistributionCycleCurrentResponse> | DistributionCycleCurrentResponse
+            >(path);
+            return unwrap(response.data);
+        } catch (error: any) {
+            const status = error?.response?.status;
+            if (status === 404) {
+                lastError = error;
+                continue;
+            }
+            throw toApiError(error);
+        }
+    }
+
+    throw toApiError(lastError);
+};
+
+export const thresholdGameService = {
+    async getCurrentCycle(): Promise<DistributionCycleCurrentResponse> {
+        try {
+            const response = await client.get<Envelope<DistributionCycleCurrentResponse> | DistributionCycleCurrentResponse>(
+                '/cycles/current/'
+            );
+            return unwrap(response.data);
+        } catch (error: any) {
+            if (error?.response?.status !== 404) {
+                throw toApiError(error);
+            }
+            try {
+                const fallback = await client.get<Envelope<DistributionCycleCurrentResponse> | DistributionCycleCurrentResponse>(
+                    '/distribution/cycle/current/'
+                );
+                return unwrap(fallback.data);
+            } catch (fallbackError: any) {
+                throw toApiError(fallbackError);
+            }
+        }
+    },
+
+    async getActiveGame(cycleId?: string): Promise<DistributionGameActiveResponse> {
+        try {
+            const query = cycleId ? `?cycle_id=${encodeURIComponent(cycleId)}` : '';
+            const response = await client.get<Envelope<DistributionGameActiveResponse> | DistributionGameActiveResponse>(
+                `/distribution-games/active/${query}`
+            );
+            return unwrap(response.data);
+        } catch (error: any) {
+            throw toApiError(error);
+        }
+    },
+
+    async submitAnswer(
+        gameId: string,
+        payload: SubmitDistributionGameAnswerPayload
+    ): Promise<SubmitDistributionGameAnswerResponse> {
+        try {
+            const response = await client.post<
+                Envelope<SubmitDistributionGameAnswerResponse> | SubmitDistributionGameAnswerResponse
+            >(`/distribution-games/${gameId}/submissions/`, payload);
+            return unwrap(response.data);
+        } catch (error: any) {
+            throw toApiError(error);
+        }
+    },
+
+    async getMySubmission(gameId: string): Promise<DistributionGameSubmissionState> {
+        try {
+            const response = await client.get<
+                Envelope<DistributionGameSubmissionState> | DistributionGameSubmissionState
+            >(`/distribution-games/${gameId}/my-submission/`);
+            return unwrap(response.data);
+        } catch (error: any) {
+            throw toApiError(error);
+        }
+    },
+
+    async simulateThresholdMet(cycleId: string): Promise<DistributionCycleCurrentResponse> {
+        return postCycleSimulationWithFallback(cycleId, 'simulate-threshold-met');
+    },
+
+    async simulateGameClose(cycleId: string): Promise<DistributionCycleCurrentResponse> {
+        return postCycleSimulationWithFallback(cycleId, 'simulate-game-close');
+    },
+
+    async simulateRollover(cycleId: string): Promise<DistributionCycleCurrentResponse> {
+        return postCycleSimulationWithFallback(cycleId, 'simulate-rollover');
+    },
+};
