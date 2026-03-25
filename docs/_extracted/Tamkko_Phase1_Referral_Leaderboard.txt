@@ -1,0 +1,783 @@
+TAMKKO
+API & User Story Documentation
+Phase 1 — MVP
+Module
+Referral System & Leaderboard
+Version
+1.0.0
+Base URL
+https://api.tamkko.app/api/v1
+Referral Link
+tamkko.app/join/{referral_code}
+Reward Rate
+5% of Tamkko's commission on referred creator tips
+Frontend
+React Native (Expo SDK 51+)
+Backend
+Django 5.x + DRF + Celery
+Depends On
+Authentication, Tipping & Wallet, Notifications modules
+Table of Contents
+1.  Technology Stack & Dependencies
+2.  Referral System — Architecture & Concepts
+2.1  How the Referral System Works
+2.2  Reward Calculation — The Commission Split
+2.3  Campus Ambassador System
+2.4  Referral Reward Flow (Step by Step)
+3.  Referral Code & Link Management
+3.1  Get My Referral Code & Link
+3.2  Validate a Referral Code (Pre-Registration Check)
+3.3  Apply Referral Code at Registration
+4.  Referral Network & Earnings
+4.1  Get My Referral Network (Who I Referred)
+4.2  Get My Referral Earnings Summary
+4.3  Get Referral Earnings Transaction History
+5.  Leaderboard
+5.1  Get Top Referrers Leaderboard
+5.2  Get Fastest Growing Networks Leaderboard
+5.3  Get Campus Leaders Leaderboard
+5.4  Get My Leaderboard Position
+6.  Campus Ambassador System
+6.1  Apply to Become a Campus Ambassador
+6.2  Get My Ambassador Status
+6.3  Get Ambassador Invite Stats
+7.  Admin — Referrals & Leaderboard
+7.1  Get All Referral Relationships (Admin)
+7.2  Get Referral Reward Payouts (Admin)
+7.3  Approve / Reject Ambassador Application
+7.4  Adjust Referral Reward Rate (Admin)
+7.5  Get Platform Referral Stats Summary
+8.  Error Code Reference
+1. Technology Stack & Dependencies
+Category
+Package / Service
+Purpose
+Referral Tracking
+Django ORM (PostgreSQL)
+Store referral relationships: who referred whom, when, and their current status
+Reward Calculation
+Celery task (triggered by tip webhook)
+Every time a referred creator receives a confirmed tip, calculate and credit the referrer's reward automatically
+Leaderboard Cache
+Redis (sorted sets)
+Store leaderboard rankings as Redis sorted sets — O(log N) updates and O(log N) rank lookups. Recalculate full leaderboard every 15 minutes.
+Referral Link
+Django short URL / expo-linking
+tamkko.app/join/{code} redirects to app via deep link or web landing page for new installs
+Code Generation
+Python secrets.token_urlsafe
+Unique 8-character alphanumeric code auto-generated on account creation
+Reward Wallet
+Same wallet as Tipping module
+Referral rewards credit the same creator wallet — no separate wallet needed
+Task Queue
+Celery + Redis
+Async reward crediting — never delay tip confirmation waiting for referral calculation
+Notifications
+expo-notifications (via Notifications module)
+Push notification when a referral reward is credited
+2. Referral System — Architecture & Concepts
+2.1  How the Referral System Works
+The referral system is a creator-to-creator growth mechanism. Every Tamkko user automatically receives a unique referral code and a shareable link on account creation. When a new user registers using that link or code, a permanent referral relationship is recorded. The referrer then earns a small percentage of Tamkko's commission on all tips the referred creator receives — for as long as they both remain on the platform.
+Every user gets a unique referral code at registration — no action needed from the user.
+Referral link format: tamkko.app/join/{referral_code} — e.g. tamkko.app/join/KWAME8X
+A user can only have one referrer. Once a referral relationship is set at registration, it cannot be changed.
+Referral relationships are one level deep in Phase 1 — there is no multi-level (MLM) structure. Creator A refers Creator B. Creator A earns rewards on B's tips. Creator B does NOT earn rewards on creators they refer (that is a Phase 2 feature).
+The referral reward comes out of Tamkko's commission share — not from the referred creator's earnings. Creator B always receives 85% of tips regardless of whether they were referred.
+Referral rewards are credited to the referrer's wallet as soon as the referred creator's tip payment is confirmed by the Hubtel webhook.
+2.2  Reward Calculation — The Commission Split
+Detailed breakdown of a GHS 10.00 tip to a referred creator:
+Recipient
+Amount (GHS 10.00 tip)
+Description
+Referred Creator (Creator B)
+GHS 8.50 (85%)
+Creator's earnings — unchanged by referral system
+Tamkko Platform Commission
+GHS 1.50 (15%)
+Total platform cut before referral split
+— Referrer Reward (Creator A)
+GHS 0.75 (5% of commission)
+5% of the GHS 1.50 commission = GHS 0.075, rounded to GHS 0.08 minimum
+— Tamkko Net Revenue
+GHS 1.42 (remaining)
+Platform keeps the rest after paying referrer
+⚠️
+The reward rate (5% of commission) is configurable by admins and may be adjusted over time. See Section 7.4. The frontend should always display the rate fetched from the API — never hardcode it.
+2.3  Campus Ambassador System
+Campus Ambassadors are a special tier of referrers — creators who are verified students or campus community leaders that actively promote Tamkko on their campus. Ambassadors get an elevated referral reward rate and a special badge on their profile. In Phase 1, ambassador status is applied manually by admins after reviewing an application. The Campus Creator Codes feature in the VIP Rooms module is a separate but complementary feature — ambassadors typically generate campus codes for their VIP rooms as well.
+Ambassador reward rate: 8% of Tamkko's commission (vs 5% for regular referrers) — configurable by admin.
+Ambassador badge displayed on profile next to the creator's username.
+Ambassador leaderboard: separate Campus Leaders leaderboard showing top referrers per university.
+Ambassadors can see how many students joined Tamkko through their referral link.
+2.4  Referral Reward Flow (Step by Step)
+Creator A shares their referral link: tamkko.app/join/KWAME8X on WhatsApp and social media.
+Creator B taps the link. The app opens (or prompts to install). The referral_code KWAME8X is stored locally in expo-secure-store and also passed as a query parameter to the registration screen.
+Creator B completes registration. The referral_code is sent in the registration request body. The backend validates the code, looks up Creator A's account, and creates a referral relationship record linking B to A.
+Creator B uploads videos and starts receiving tips from their followers.
+A fan sends Creator B a GHS 10.00 tip. The Hubtel webhook confirms the payment.
+The tip webhook handler dispatches a Celery task: calculate_referral_reward(tip_id).
+The Celery task looks up Creator B's referral relationship, finds Creator A as the referrer, calculates the reward (5% of GHS 1.50 commission = GHS 0.075, rounded up to GHS 0.08), and credits Creator A's wallet with GHS 0.08.
+A referral_reward transaction is recorded in Creator A's wallet transaction history with subtype: referral_reward and a reference to the original tip.
+Creator A receives a push notification: 'You earned a referral reward! @creator_b received a tip and you earned GHS 0.08.'
+Creator A can withdraw referral rewards along with all other wallet earnings — no separate withdrawal needed.
+3. Referral Code & Link Management
+3.1  Get My Referral Code & Link
+👤
+User Story:  As a creator, I want to see my unique referral code and shareable link so I can post it on social media and WhatsApp to invite other creators to join Tamkko.
+GET
+/api/v1/referral/my-code
+Get My Referral Code
+Auth Required
+Yes — Authorization: Bearer {access_token}
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"data": {
+"referral_code": "KWAME8X",
+"referral_link": "https://tamkko.app/join/KWAME8X",
+"deep_link": "tamkko://join/KWAME8X",
+"share_text": "Join me on Tamkko — Ghana's home for creators! Sign up using my link and start earning from your content: https://tamkko.app/join/KWAME8X",
+"total_referrals": 14,
+"active_referrals": 11,
+"total_earned_ghs": "48.50",
+"reward_rate_percent": 5,
+"is_ambassador": false,
+"qr_code_url": "https://cdn.tamkko.app/qr/KWAME8X.png"
+}
+}
+qr_code_url is a pre-generated QR code PNG the creator can screenshot and share. It encodes the referral link.
+3.2  Validate a Referral Code (Pre-Registration Check)
+👤
+User Story:  As a new user who received a referral link, I want the app to validate the code and show me who invited me before I complete registration — so I know the code is real and not expired.
+GET
+/api/v1/referral/validate/{referral_code}
+Validate Code
+Auth Required
+No — called before registration
+Use
+Called when the app launches with a deep link containing a referral code. Validates the code and shows the referrer's profile so the new user feels a personal connection.
+200
+OK — Code valid
+✅  Response Body
+{
+"status": "success",
+"data": {
+"referral_code": "KWAME8X",
+"is_valid": true,
+"referrer": {
+"username": "kwame_creates",
+"display_name": "Kwame Asante",
+"profile_picture": "https://cdn.tamkko.app/avatars/usr_8k2m9x4p.jpg",
+"is_ambassador": false,
+"total_referrals": 14
+},
+"message": "Kwame Asante invited you to join Tamkko!"
+}
+}
+404
+Not Found — Code does not exist
+❌  Error Response
+{
+"status": "error",
+"message": "Referral code not found.",
+"code": "REFERRAL_CODE_NOT_FOUND"
+}
+3.3  Apply Referral Code at Registration
+ℹ️
+The referral_code field is added to the existing registration endpoint (POST /api/v1/auth/register) documented in the Authentication module. This section documents only the referral-specific behaviour. The full registration request body is in the Auth document.
+Referral field added to POST /api/v1/auth/register:
+📤  Registration Request Body (referral field only)
+{
+"phone_number": "+233241234567",
+"password": "SecurePassword123!",
+"username": "new_creator_gh",
+"referral_code": "KWAME8X"
+}
+referral_code is optional. If omitted, the user registers without a referrer. If provided, the backend validates it and records the relationship. An invalid code returns a validation warning but does NOT block registration — the user is registered without a referral relationship.
+📤  Referral section of registration response
+{
+"referral": {
+"code_applied": "KWAME8X",
+"referred_by": {
+"username": "kwame_creates",
+"display_name": "Kwame Asante"
+},
+"relationship_created": true
+}
+}
+4. Referral Network & Earnings
+4.1  Get My Referral Network (Who I Referred)
+👤
+User Story:  As a creator, I want to see a list of all the creators who joined Tamkko using my referral code — their username, when they joined, how active they are, and how much I have earned from each of them.
+GET
+/api/v1/referral/network
+My Referral Network
+Auth Required
+Yes — Authorization: Bearer {access_token}
+Query Params
+cursor, limit (default 20), status (active | inactive | all — default all), sort (joined_date | earnings | tips_count)
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"data": {
+"summary": {
+"total_referred": 14,
+"active_referred": 11,
+"inactive_referred": 3,
+"total_earned_ghs": "48.50",
+"earned_this_month_ghs": "12.00",
+"reward_rate_percent": 5
+},
+"referrals": [
+{
+"user_id": "usr_r1s2t3u4",
+"username": "creator_b_gh",
+"display_name": "Kofi Acheampong",
+"profile_picture": "https://cdn.tamkko.app/avatars/usr_r1s2t3u4.jpg",
+"status": "active",
+"joined_via_referral_at": "2025-02-10T09:00:00Z",
+"total_tips_received_ghs": "320.00",
+"my_earnings_from_this_creator_ghs": "2.40",
+"last_active_at": "2025-03-01T08:00:00Z"
+}
+],
+"next_cursor": "cursor_ref_abc",
+"has_more": true
+}
+}
+4.2  Get My Referral Earnings Summary
+👤
+User Story:  As a creator, I want to see a clear summary of how much I have earned from referral rewards this week, this month, and all time, so I can track the value of my network.
+GET
+/api/v1/referral/earnings
+Referral Earnings Summary
+Query Params
+period (7d | 30d | 90d | all — default 30d)
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"data": {
+"period": "30d",
+"total_earned_ghs": "12.00",
+"total_rewards_count": 87,
+"average_reward_ghs": "0.14",
+"top_earning_referral": {
+"username": "creator_b_gh",
+"display_name": "Kofi Acheampong",
+"earned_ghs": "2.40"
+},
+"daily_earnings": [
+{
+"date": "2025-03-01",
+"earned_ghs": "0.80",
+"rewards_count": 6
+},
+{
+"date": "2025-02-28",
+"earned_ghs": "0.64",
+"rewards_count": 4
+}
+],
+"all_time_earned_ghs": "48.50",
+"reward_rate_percent": 5
+}
+}
+4.3  Get Referral Earnings Transaction History
+👤
+User Story:  As a creator, I want to see a full log of every referral reward I have received — which referred creator triggered it, the original tip amount, and my reward — so I have a complete audit trail.
+GET
+/api/v1/referral/earnings/transactions
+Referral Transactions
+Query Params
+cursor, limit (default 20), referred_user_id (optional filter)
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"data": {
+"transactions": [
+{
+"id": "rref_a1b2c3",
+"type": "referral_reward",
+"reward_ghs": "0.08",
+"referred_creator": {
+"username": "creator_b_gh",
+"display_name": "Kofi Acheampong",
+"profile_picture": "https://cdn.tamkko.app/avatars/usr_r1s2t3u4.jpg"
+},
+"original_tip": {
+"tip_id": "tip_4m5n6p7q",
+"tip_amount_ghs": "10.00",
+"platform_commission_ghs": "1.50",
+"reward_rate_percent": 5
+},
+"credited_at": "2025-03-01T10:02:50Z"
+}
+],
+"next_cursor": "cursor_rref_abc",
+"has_more": true
+}
+}
+5. Leaderboard
+ℹ️
+Leaderboards are cached in Redis as sorted sets and recalculated every 15 minutes. They are public — no auth required to view. Three leaderboard categories in Phase 1: Top Referrers (most creators referred), Fastest Growing Networks (most referral earnings in the past 30 days), and Campus Leaders (top referrers per university/campus, sourced from ambassador applications). Each leaderboard shows the top 100 positions.
+5.1  Get Top Referrers Leaderboard
+👤
+User Story:  As a user browsing the app's community page, I want to see who the top referrers on Tamkko are — the creators who have brought the most new creators to the platform — so I feel inspired and competitive.
+GET
+/api/v1/leaderboard/top-referrers
+Top Referrers
+Auth Required
+No — public
+Query Params
+limit (default 20, max 100), period (all_time | 30d | 7d — default all_time)
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"data": {
+"leaderboard_type": "top_referrers",
+"period": "all_time",
+"updated_at": "2025-03-01T10:30:00Z",
+"entries": [
+{
+"rank": 1,
+"user": {
+"username": "kwame_creates",
+"display_name": "Kwame Asante",
+"profile_picture": "https://cdn.tamkko.app/avatars/usr_8k2m9x4p.jpg",
+"is_verified": false,
+"is_ambassador": true
+},
+"total_referrals": 94,
+"active_referrals": 78,
+"badge": "gold"
+},
+{
+"rank": 2,
+"user": {
+"username": "ama_vibes",
+"display_name": "Ama Asantewaa",
+"profile_picture": "https://cdn.tamkko.app/avatars/usr_ama.jpg",
+"is_verified": false,
+"is_ambassador": false
+},
+"total_referrals": 67,
+"active_referrals": 54,
+"badge": "silver"
+}
+]
+}
+}
+badge values: gold (rank 1), silver (rank 2), bronze (rank 3), null (rank 4+)
+5.2  Get Fastest Growing Networks Leaderboard
+👤
+User Story:  As a creator, I want to see who has earned the most referral income in the past 30 days — so I know who is actively building their network right now, not just historically.
+GET
+/api/v1/leaderboard/fastest-growing
+Fastest Growing Networks
+Auth Required
+No — public
+Query Params
+limit (default 20, max 100)
+Note
+Always shows the past 30 days. Fixed period — no period parameter.
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"data": {
+"leaderboard_type": "fastest_growing",
+"period": "30d",
+"updated_at": "2025-03-01T10:30:00Z",
+"entries": [
+{
+"rank": 1,
+"user": {
+"username": "kwame_creates",
+"display_name": "Kwame Asante",
+"profile_picture": "https://cdn.tamkko.app/avatars/usr_8k2m9x4p.jpg",
+"is_ambassador": true
+},
+"new_referrals_30d": 22,
+"earnings_30d_ghs": "48.50",
+"badge": "gold"
+}
+]
+}
+}
+5.3  Get Campus Leaders Leaderboard
+👤
+User Story:  As a student creator, I want to see the top campus ambassadors at my university and across Ghana — so I know who the most influential student creators are on the platform.
+GET
+/api/v1/leaderboard/campus-leaders
+Campus Leaders
+Auth Required
+No — public
+Query Params
+limit (default 20, max 100), campus (optional — filter by university name e.g. 'University of Ghana')
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"data": {
+"leaderboard_type": "campus_leaders",
+"updated_at": "2025-03-01T10:30:00Z",
+"entries": [
+{
+"rank": 1,
+"user": {
+"username": "kwame_creates",
+"display_name": "Kwame Asante",
+"profile_picture": "https://cdn.tamkko.app/avatars/usr_8k2m9x4p.jpg",
+"is_ambassador": true
+},
+"campus": "University of Ghana",
+"campus_referrals": 47,
+"badge": "gold"
+}
+]
+}
+}
+5.4  Get My Leaderboard Position
+👤
+User Story:  As a logged-in creator, I want to see my own rank across all three leaderboard categories — even if I am not in the top 20 visible on the public list — so I know where I stand and how far I am from the next rank.
+GET
+/api/v1/leaderboard/my-position
+My Leaderboard Position
+Auth Required
+Yes — Authorization: Bearer {access_token}
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"data": {
+"top_referrers": {
+"rank": 3,
+"total_referrals": 14,
+"score": 14,
+"next_rank_score": 22,
+"gap_to_next_rank": 8,
+"badge": "bronze"
+},
+"fastest_growing": {
+"rank": 7,
+"earnings_30d_ghs": "12.00",
+"next_rank_earnings_ghs": "18.50",
+"gap_to_next_rank_ghs": "6.50",
+"badge": null
+},
+"campus_leaders": {
+"rank": 1,
+"campus": "University of Ghana",
+"campus_referrals": 14,
+"badge": "gold"
+}
+}
+}
+6. Campus Ambassador System
+ℹ️
+Campus Ambassadors are verified student creators who actively promote Tamkko on their campus. Ambassador status is applied for in-app and approved manually by the Tamkko admin team. Approved ambassadors receive an elevated referral reward rate (8% instead of 5%), a special ambassador badge on their profile, and appear on the Campus Leaders leaderboard.
+6.1  Apply to Become a Campus Ambassador
+👤
+User Story:  As a student creator, I want to apply to become a Campus Ambassador for my university so I can earn a higher referral rate and help grow Tamkko's community on campus.
+POST
+/api/v1/ambassador/apply
+Apply for Ambassador
+Auth Required
+Yes — Authorization: Bearer {access_token}
+One application at a time
+Cannot apply again if an application is pending. Returns 409 AMBASSADOR_APPLICATION_PENDING.
+📤  Request Body
+{
+"campus": "University of Ghana",
+"faculty": "School of Engineering Sciences",
+"student_id": "10834729",
+"graduation_year": 2026,
+"social_following": {
+"instagram": "@kwame_creates",
+"tiktok": "@kwame_creates",
+"twitter": null
+},
+"why_apply": "I have a large following on campus and I want to help my fellow students discover Tamkko and start earning from their content."
+}
+201
+Created — Application submitted
+✅  Response Body
+{
+"status": "success",
+"message": "Ambassador application submitted! We will review it within 3-5 business days and notify you by push notification.",
+"data": {
+"application_id": "amb_app_x1y2z3",
+"status": "pending",
+"campus": "University of Ghana",
+"submitted_at": "2025-03-01T11:00:00Z"
+}
+}
+6.2  Get My Ambassador Status
+GET
+/api/v1/ambassador/status
+Ambassador Status
+Auth Required
+Yes — Authorization: Bearer {access_token}
+✅  Response (200 OK)
+{
+"status": "success",
+"data": {
+"is_ambassador": true,
+"ambassador_since": "2025-02-15T09:00:00Z",
+"campus": "University of Ghana",
+"reward_rate_percent": 8,
+"application_status": "approved",
+"badge_label": "UG Campus Ambassador"
+}
+}
+6.3  Get Ambassador Invite Stats
+👤
+User Story:  As a campus ambassador, I want to see detailed stats about how many students I have brought to Tamkko from my campus, so I can report on my impact and improve my outreach.
+GET
+/api/v1/ambassador/stats
+Ambassador Stats
+Auth Required
+Yes — must be an approved ambassador
+Query Params
+period (7d | 30d | all — default 30d)
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"data": {
+"period": "30d",
+"campus": "University of Ghana",
+"campus_rank": 1,
+"total_campus_invites": 47,
+"active_campus_invites": 38,
+"total_earned_ghs": "68.20",
+"reward_rate_percent": 8,
+"vs_standard_rate_bonus_ghs": "20.46",
+"top_referred_creators": [
+{
+"username": "ug_music_fan",
+"display_name": "Abena Owusu",
+"tips_received_ghs": "180.00",
+"my_earnings_from_ghs": "1.44"
+}
+]
+}
+}
+7. Admin — Referrals & Leaderboard
+ℹ️
+All admin endpoints require an admin JWT token. Regular users receive 403 PERMISSION_DENIED.
+7.1  Get All Referral Relationships (Admin)
+GET
+/api/v1/admin/referrals
+All Referral Relationships
+Query Params
+page, limit, referrer_id, referred_id, status (active | inactive), created_after
+✅  Response (200 OK)
+{
+"status": "success",
+"data": {
+"referrals": [
+{
+"id": "rel_a1b2c3",
+"referrer": {
+"id": "usr_8k2m9x4p",
+"username": "kwame_creates"
+},
+"referred": {
+"id": "usr_r1s2t3u4",
+"username": "creator_b_gh"
+},
+"referral_code_used": "KWAME8X",
+"status": "active",
+"total_tips_from_referred_ghs": "320.00",
+"total_rewards_paid_to_referrer_ghs": "2.40",
+"created_at": "2025-02-10T09:00:00Z"
+}
+],
+"pagination": {
+"current_page": 1,
+"total_pages": 40,
+"total_relationships": 800
+}
+}
+}
+7.2  Get Referral Reward Payouts (Admin)
+GET
+/api/v1/admin/referrals/rewards
+Referral Reward Payouts
+Query Params
+page, limit, referrer_id, start_date, end_date, min_amount
+✅  Response (200 OK)
+{
+"status": "success",
+"data": {
+"total_rewards_paid_ghs": "1840.20",
+"rewards": [
+{
+"id": "rref_a1b2c3",
+"referrer": {
+"username": "kwame_creates"
+},
+"referred": {
+"username": "creator_b_gh"
+},
+"reward_ghs": "0.08",
+"original_tip_ghs": "10.00",
+"reward_rate_percent": 5,
+"credited_at": "2025-03-01T10:02:50Z"
+}
+],
+"pagination": {
+"current_page": 1,
+"total_pages": 920,
+"total_rewards": 18400
+}
+}
+}
+7.3  Approve / Reject Ambassador Application
+👤
+User Story:  As an admin, I want to review campus ambassador applications and approve or reject them, with an optional message to the applicant.
+PATCH
+/api/v1/admin/ambassador/applications/{application_id}
+Review Application
+📤  Request Body
+{
+"action": "approve",
+"admin_notes": "Strong campus presence. Verified UG student. Approved.",
+"custom_reward_rate_percent": 8
+}
+action: approve | reject. custom_reward_rate_percent is optional — defaults to the platform ambassador rate if omitted. Allows giving individual ambassadors a higher rate for exceptional cases.
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"message": "Ambassador application approved. Applicant notified via push notification.",
+"data": {
+"application_id": "amb_app_x1y2z3",
+"action": "approve",
+"new_reward_rate_percent": 8,
+"ambassador_badge_granted": true
+}
+}
+7.4  Adjust Referral Reward Rate (Admin)
+👤
+User Story:  As an admin, I want to change the platform-wide referral reward rate and ambassador reward rate — for example increasing them during a growth campaign — without redeploying code.
+PATCH
+/api/v1/admin/referrals/reward-rate
+Update Reward Rate
+Auth Required
+Yes — Admin JWT
+Note
+Changes take effect immediately for all new referral rewards. Existing credited rewards are not retroactively changed. The new rate is returned in all /api/v1/referral/ endpoints so the frontend always reflects the current rate.
+📤  Request Body
+{
+"standard_reward_rate_percent": 5,
+"ambassador_reward_rate_percent": 8,
+"reason": "Increasing rates for Q2 2025 growth campaign"
+}
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"message": "Referral reward rates updated.",
+"data": {
+"standard_reward_rate_percent": 5,
+"ambassador_reward_rate_percent": 8,
+"effective_from": "2025-03-01T16:00:00Z",
+"updated_by": "admin_user_1"
+}
+}
+7.5  Get Platform Referral Stats Summary
+👤
+User Story:  As an admin, I want a high-level dashboard of the referral program's performance — total relationships, rewards paid out, most active referrers, and campus breakdown.
+GET
+/api/v1/admin/referrals/stats
+Platform Referral Stats
+Query Params
+period (7d | 30d | all — default 30d)
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"data": {
+"period": "30d",
+"total_referral_relationships": 800,
+"new_relationships_this_period": 124,
+"total_rewards_paid_ghs": "1840.20",
+"rewards_paid_this_period_ghs": "420.00",
+"active_ambassadors": 18,
+"pending_ambassador_applications": 7,
+"top_campuses": [
+{
+"campus": "University of Ghana",
+"ambassadors": 5,
+"referrals": 210
+},
+{
+"campus": "KNUST",
+"ambassadors": 4,
+"referrals": 187
+}
+],
+"viral_coefficient": 1.3,
+"current_rates": {
+"standard_reward_rate_percent": 5,
+"ambassador_reward_rate_percent": 8
+}
+}
+}
+8. Error Code Reference
+Error Code
+HTTP
+Description
+REFERRAL_CODE_NOT_FOUND
+404
+Referral code does not exist or belongs to a deactivated account
+REFERRAL_CODE_SELF
+400
+User cannot use their own referral code to register
+REFERRAL_ALREADY_SET
+409
+User already has a referrer — referral relationships cannot be changed after registration
+REFERRAL_NOT_FOUND
+404
+Referral relationship record not found
+AMBASSADOR_APPLICATION_PENDING
+409
+User already has a pending ambassador application — cannot apply again
+AMBASSADOR_APPLICATION_NOT_FOUND
+404
+Ambassador application ID not found
+NOT_AN_AMBASSADOR
+403
+This endpoint requires ambassador status — application must be approved first
+LEADERBOARD_NOT_FOUND
+404
+Requested leaderboard type does not exist
+REWARD_RATE_INVALID
+400
+Reward rate must be between 0 and 100 percent
+PERMISSION_DENIED
+403
+Admin permission required for this endpoint
+INTERNAL_SERVER_ERROR
+500
+Unexpected server error — logged to Sentry automatically

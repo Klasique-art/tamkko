@@ -12,6 +12,7 @@ const PROD_PAYMENT_CALLBACK_URL = "thefourthbook://payments/callback";
 
 export const API_BASE_URL = isProduction ? PROD_API_URL : DEV_API_URL;
 export const PAYMENT_CALLBACK_URL = isProduction ? PROD_PAYMENT_CALLBACK_URL : DEV_PAYMENT_CALLBACK_URL;
+export const USE_MOCK_DATA = true;
 
 const extra = (Constants.expoConfig?.extra ?? {}) as Record<string, any>;
 const googleOAuth = (extra.googleOAuth ?? {}) as Record<string, string | undefined>;

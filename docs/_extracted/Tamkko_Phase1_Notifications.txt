@@ -1,0 +1,829 @@
+TAMKKO
+API & User Story Documentation
+Phase 1 — MVP
+Module
+Notifications
+Version
+1.0.0
+Base URL
+https://api.tamkko.app/api/v1
+Push Provider
+Expo Push Notifications (expo-server-sdk)
+Frontend
+React Native (Expo SDK 51+) — expo-notifications
+Backend
+Django 5.x + DRF + Celery
+Depends On
+All Phase 1 modules (Auth, Video, Tipping, VIP Rooms)
+Table of Contents
+1.  Technology Stack & Dependencies
+2.  Notification Architecture & Concepts
+2.1  Push vs In-App Notifications
+2.2  Expo Push Notification Flow
+2.3  Notification Types Reference Table
+2.4  Deep Link Routing (tap-to-navigate)
+3.  Device Token Management
+3.1  Register Push Token
+3.2  Deregister Push Token (Logout / Permission Revoked)
+4.  In-App Notification Centre (REST)
+4.1  Get Notifications
+4.2  Mark a Notification as Read
+4.3  Mark All Notifications as Read
+4.4  Delete a Notification
+4.5  Get Unread Count
+5.  Notification Preferences
+5.1  Get My Notification Preferences
+5.2  Update Notification Preferences
+6.  Admin — Notifications
+6.1  Send a Broadcast Notification (All Users)
+6.2  Send a Targeted Notification (Specific Users)
+6.3  Get Broadcast History
+6.4  Get Notification Delivery Stats
+7.  Error Code Reference
+1. Technology Stack & Dependencies
+Tamkko uses Expo Push Notifications as the single push delivery service for both iOS and Android. Expo acts as a unified gateway — the backend sends one API call to Expo's push service, which then fans out to APNs (Apple) or FCM (Google Firebase) as appropriate for each device. This avoids managing two separate push credentials in Phase 1.
+1.1  Backend — Django / Python
+Category
+Package / Service
+Purpose
+Push SDK
+exponent-server-sdk-python (or direct Expo Push HTTP API)
+Send push notifications from Django/Celery to Expo's push endpoint
+Task Queue
+Celery + Redis
+Send all push notifications asynchronously — never block a request waiting for push delivery
+Notification Store
+PostgreSQL (Django ORM)
+Persist all in-app notifications for the notification centre
+Badge Count
+Redis
+Cache unread notification count per user — avoids DB query on every app open
+Rate Limiting
+Expo Push API limits (600 messages/sec per project)
+Batch sends using Expo's chunk helper — max 100 tokens per API call
+Retry
+Celery retry with exponential backoff
+Retry failed push sends up to 3 times
+1.2  Frontend — React Native (Expo)
+Category
+Package / Service
+Purpose
+Push
+expo-notifications
+Request permission, get Expo Push Token, handle foreground/background/quit notifications
+Deep Links
+expo-linking + expo-router
+Navigate to the correct screen when user taps a notification
+Badge
+expo-notifications (setBadgeCountAsync)
+Update the app icon badge count from the unread_count field
+Local Notif
+expo-notifications (scheduleNotificationAsync)
+Show local notifications for in-app events when the user is already inside the app
+State
+zustand
+Store unread_count globally — update on app foreground and after mark-as-read calls
+2. Notification Architecture & Concepts
+2.1  Push vs In-App Notifications
+Tamkko has two parallel notification systems that always fire together:
+Push Notification
+In-App Notification
+Delivery
+Via Expo → APNs/FCM to device OS
+Stored in DB, fetched by app
+When shown
+Device lock screen / banner — even when app is closed
+Inside the app's notification bell icon
+Requires permission
+Yes — user must grant push permission
+No — always available in-app
+Persisted
+No — OS discards after tap/dismiss
+Yes — stays until deleted by user
+Unread badge
+Updates app icon badge
+Updates in-app bell badge count
+Deep link on tap
+Yes — navigates to relevant screen
+Yes — tapping notification item navigates
+Controlled by user
+Yes — per-type toggle in preferences
+Yes — same preference toggles
+2.2  Expo Push Notification Flow
+Step-by-step from trigger event to device screen:
+An event occurs in the app (e.g. someone tips a creator). The Django view or Celery task that handles the event calls the notification service.
+The notification service: (a) creates an in-app notification record in the DB for the recipient, (b) looks up all active Expo push tokens for the recipient from the device_tokens table, (c) dispatches a Celery task to send the push notification asynchronously.
+The Celery task calls the Expo Push API: POST https://exp.host/--/api/v2/push/send with the push token, title, body, data payload (includes type and navigation target), and badge count.
+Expo routes the message to APNs (iOS) or FCM (Android) based on the token prefix. The OS delivers the notification to the device.
+The user taps the notification. The Expo app receives the tap event in the notification response handler. It reads the data.screen and data.params fields and calls router.push() to navigate to the correct screen.
+The app calls PATCH /api/v1/notifications/{notification_id}/read to mark the in-app notification as read and decrement the badge count.
+⚠️
+Never send push notifications synchronously inside a Django request/response cycle. Always dispatch to Celery. A slow or failed push send must never cause the triggering API call (e.g. tip confirmation) to fail or time out.
+2.3  Notification Types Reference Table
+All notification types, their push title templates, and whether they appear as push and/or in-app notifications. Variables in {curly braces} are replaced at send time.
+type
+Title Template
+Push?
+In-App?
+new_follower
+{username} started following you
+Yes
+Yes
+new_like
+@{username} liked your video
+Yes
+Yes
+new_comment
+@{username} commented: {preview}
+Yes
+Yes
+comment_reply
+@{username} replied to your comment
+Yes
+Yes
+comment_like
+@{username} liked your comment
+No
+Yes
+new_tip
+@{username} tipped you GHS {amount}! 🎉
+Yes
+Yes
+tip_sent
+Your GHS {amount} tip to @{creator} was sent!
+Yes
+Yes
+tip_failed
+Your tip payment was not completed
+Yes
+Yes
+new_subscription
+@{username} subscribed to your content 🎉
+Yes
+Yes
+subscription_renewed
+Your subscription to @{creator} renewed
+Yes
+Yes
+subscription_expiring
+Your subscription to @{creator} expires in 3 days
+Yes
+Yes
+subscription_expired
+Your subscription to @{creator} has expired
+Yes
+Yes
+video_live
+@{creator} just posted a new video!
+Yes
+Yes
+video_processing_done
+Your video '{title}' is live!
+Yes
+Yes
+video_processing_failed
+Your video failed to process. Please try again.
+Yes
+Yes
+room_new_tip
+@{username} tipped GHS {amount} in your room! 🎉
+Yes
+Yes
+room_member_joined
+@{username} joined your VIP room
+No
+Yes
+withdrawal_processing
+Your withdrawal of GHS {amount} is being processed
+Yes
+Yes
+withdrawal_completed
+GHS {amount} sent to your MoMo account! 💸
+Yes
+Yes
+withdrawal_failed
+Your withdrawal of GHS {amount} failed
+Yes
+Yes
+account_suspended
+Your account has been suspended
+Yes
+Yes
+video_removed
+Your video was removed by moderation
+Yes
+Yes
+broadcast
+[Admin broadcast — custom title]
+Yes
+Yes
+2.4  Deep Link Routing (tap-to-navigate)
+Every push notification and in-app notification carries a data payload with screen and params so the app knows where to navigate on tap. The Expo notification handler reads these fields.
+type
+screen
+params
+new_follower
+/(tabs)/profile/[username]
+{ username }
+new_like
+/(tabs)/video/[id]
+{ video_id }
+new_comment
+/(tabs)/video/[id]
+{ video_id, comment_id }
+comment_reply
+/(tabs)/video/[id]
+{ video_id, comment_id }
+new_tip
+/(tabs)/wallet
+{}
+tip_sent
+/(tabs)/wallet
+{}
+tip_failed
+/(tabs)/wallet
+{}
+new_subscription
+/(tabs)/wallet
+{}
+subscription_expiring
+/(tabs)/subscriptions
+{}
+video_live
+/(tabs)/video/[id]
+{ video_id }
+video_processing_done
+/(tabs)/video/[id]
+{ video_id }
+video_processing_failed
+/(tabs)/upload
+{}
+room_new_tip
+/(tabs)/rooms/[id]
+{ room_id }
+withdrawal_completed
+/(tabs)/wallet
+{}
+withdrawal_failed
+/(tabs)/wallet
+{}
+broadcast
+/(tabs)/home
+{}
+Expo Notification Response Handler (Expo Router)
+{
+"// In your root _layout.tsx": "",
+"useEffect(() => {": "",
+"  const sub = Notifications.addNotificationResponseReceivedListener(response => {": "",
+"    const { screen, params } = response.notification.request.content.data;": "",
+"    if (screen) router.push({ pathname: screen, params });": "",
+"  });": "",
+"  return () => sub.remove();": "",
+"}, []);": ""
+}
+3. Device Token Management
+ℹ️
+An Expo Push Token is a unique string (format: ExponentPushToken[xxxxxx]) that identifies a specific app installation on a specific device. It must be registered with the backend after login so the backend knows which device to send pushes to. A single user can have multiple tokens (phone + tablet, or after reinstall). The backend stores all active tokens per user and sends to all of them.
+3.1  Register Push Token
+👤
+User Story:  As a user who just logged in or opened the app, I want my device's Expo push token to be registered with the backend so I start receiving push notifications for activity on my account.
+When to call: Call this endpoint on every app launch after login, not just on first install. Tokens can change after app updates or OS reinstalls, so always register the current token on launch.
+POST
+/api/v1/notifications/token
+Register Push Token
+Auth Required
+Yes — Authorization: Bearer {access_token}
+Idempotent
+Yes — registering the same token twice is safe. The backend upserts by token string.
+📤  Request Body
+{
+"expo_push_token": "ExponentPushToken[xxxxxxxxxxxxxxxxxxxxxx]",
+"device_type": "ios",
+"device_model": "iPhone 15 Pro",
+"app_version": "1.0.0"
+}
+device_type accepted values: ios | android
+200
+OK — Token registered
+✅  Response Body
+{
+"status": "success",
+"message": "Push token registered.",
+"data": {
+"token_id": "dtkn_1a2b3c4d",
+"expo_push_token": "ExponentPushToken[xxxxxxxxxxxxxxxxxxxxxx]",
+"device_type": "ios",
+"registered_at": "2025-03-01T10:00:00Z"
+}
+}
+3.2  Deregister Push Token (Logout / Permission Revoked)
+👤
+User Story:  As a user logging out or revoking push permission, I want my device token removed from the backend so I stop receiving notifications on this device.
+When to call: (1) On explicit logout. (2) When expo-notifications returns null for the push token — this means the user revoked permission. Always deregister before clearing the local auth token.
+DELETE
+/api/v1/notifications/token
+Deregister Token
+Auth Required
+Yes — Authorization: Bearer {access_token}
+📤  Request Body
+{
+"expo_push_token": "ExponentPushToken[xxxxxxxxxxxxxxxxxxxxxx]"
+}
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"message": "Push token deregistered. You will no longer receive notifications on this device."
+}
+4. In-App Notification Centre (REST)
+ℹ️
+The in-app notification centre is the bell icon in the app header. It shows a paginated list of all notifications for the logged-in user — newest first. Notifications are grouped into Social (likes, comments, follows), Earnings (tips, subscriptions, withdrawals), and System (video processing, account, broadcasts). Each notification is tappable and navigates the user to the relevant screen.
+4.1  Get Notifications
+👤
+User Story:  As a user, I want to open my notification centre and see all my recent notifications — new followers, tips, comments, earnings, and system alerts — grouped and sorted by newest first.
+GET
+/api/v1/notifications
+Get Notifications
+Auth Required
+Yes — Authorization: Bearer {access_token}
+Query Params
+cursor, limit (default 20), category (social | earnings | system | all — default all), unread_only (true/false)
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"data": {
+"unread_count": 7,
+"notifications": [
+{
+"id": "notif_a1b2c3",
+"type": "new_tip",
+"category": "earnings",
+"title": "@fan_user_1 tipped you GHS 10.00! 🎉",
+"body": "Keep up the great content! 🔥",
+"is_read": false,
+"actor": {
+"id": "usr_x1y2z3",
+"username": "fan_user_1",
+"display_name": "Ama Mensah",
+"profile_picture": "https://cdn.tamkko.app/avatars/usr_x1y2z3.jpg"
+},
+"data": {
+"screen": "/(tabs)/wallet",
+"params": {},
+"tip_id": "tip_4m5n6p7q",
+"amount_ghs": "10.00"
+},
+"created_at": "2025-03-01T10:02:45Z"
+},
+{
+"id": "notif_d4e5f6",
+"type": "new_comment",
+"category": "social",
+"title": "@kwame_creates commented on your video",
+"body": "This is so beautiful! 🙌",
+"is_read": true,
+"actor": {
+"id": "usr_8k2m9x4p",
+"username": "kwame_creates",
+"display_name": "Kwame Asante",
+"profile_picture": "https://cdn.tamkko.app/avatars/usr_8k2m9x4p.jpg"
+},
+"data": {
+"screen": "/(tabs)/video/[id]",
+"params": {
+"id": "vid_7k3m8n2p",
+"comment_id": "cmt_a1b2c3"
+}
+},
+"created_at": "2025-03-01T09:15:00Z"
+}
+],
+"next_cursor": "cursor_notif_abc",
+"has_more": true
+}
+}
+4.2  Mark a Notification as Read
+👤
+User Story:  As a user, I want a notification to be marked as read when I tap it so the unread count decreases and the notification no longer shows the unread indicator.
+PATCH
+/api/v1/notifications/{notification_id}/read
+Mark Read
+Auth Required
+Yes — must be the notification owner
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"data": {
+"notification_id": "notif_a1b2c3",
+"is_read": true,
+"unread_count": 6
+}
+}
+4.3  Mark All Notifications as Read
+👤
+User Story:  As a user, I want to clear all my unread notifications at once by tapping 'Mark all as read' so my badge count resets to zero.
+POST
+/api/v1/notifications/read-all
+Mark All Read
+Auth Required
+Yes — Authorization: Bearer {access_token}
+Query Params
+category (social | earnings | system) — optional. Omit to mark all categories.
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"message": "All notifications marked as read.",
+"data": {
+"marked_count": 7,
+"unread_count": 0
+}
+}
+4.4  Delete a Notification
+👤
+User Story:  As a user, I want to swipe-delete a notification I no longer want to see in my notification centre.
+DELETE
+/api/v1/notifications/{notification_id}
+Delete Notification
+Auth Required
+Yes — must be the notification owner
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"message": "Notification deleted.",
+"data": {
+"unread_count": 6
+}
+}
+4.5  Get Unread Count
+👤
+User Story:  As a user opening the app, I want to fetch my unread notification count immediately so the bell badge renders correctly before the full notification list loads.
+This is a lightweight endpoint — call it on every app foreground event (AppState 'active'). Use the response to update the bell badge and the app icon badge count via Notifications.setBadgeCountAsync(count).
+GET
+/api/v1/notifications/unread-count
+Unread Count
+Auth Required
+Yes — Authorization: Bearer {access_token}
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"data": {
+"unread_count": 7,
+"by_category": {
+"social": 4,
+"earnings": 3,
+"system": 0
+}
+}
+}
+5. Notification Preferences
+ℹ️
+Users control which notification types they receive via the preferences endpoints. Each type has two independent toggles: push_enabled (controls device push notification delivery) and in_app_enabled (controls whether the notification appears in the in-app notification centre). The backend checks these flags before creating and sending any notification.
+5.1  Get My Notification Preferences
+👤
+User Story:  As a user, I want to open my notification settings and see which types of notifications I have turned on or off.
+GET
+/api/v1/notifications/preferences
+Get Preferences
+Auth Required
+Yes — Authorization: Bearer {access_token}
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"data": {
+"preferences": {
+"new_follower": {
+"push_enabled": true,
+"in_app_enabled": true
+},
+"new_like": {
+"push_enabled": true,
+"in_app_enabled": true
+},
+"new_comment": {
+"push_enabled": true,
+"in_app_enabled": true
+},
+"comment_reply": {
+"push_enabled": true,
+"in_app_enabled": true
+},
+"comment_like": {
+"push_enabled": false,
+"in_app_enabled": true
+},
+"new_tip": {
+"push_enabled": true,
+"in_app_enabled": true
+},
+"tip_sent": {
+"push_enabled": true,
+"in_app_enabled": true
+},
+"tip_failed": {
+"push_enabled": true,
+"in_app_enabled": true
+},
+"new_subscription": {
+"push_enabled": true,
+"in_app_enabled": true
+},
+"subscription_renewed": {
+"push_enabled": true,
+"in_app_enabled": true
+},
+"subscription_expiring": {
+"push_enabled": true,
+"in_app_enabled": true
+},
+"subscription_expired": {
+"push_enabled": true,
+"in_app_enabled": true
+},
+"video_live": {
+"push_enabled": true,
+"in_app_enabled": true
+},
+"video_processing_done": {
+"push_enabled": true,
+"in_app_enabled": true
+},
+"video_processing_failed": {
+"push_enabled": true,
+"in_app_enabled": true
+},
+"room_new_tip": {
+"push_enabled": true,
+"in_app_enabled": true
+},
+"room_member_joined": {
+"push_enabled": false,
+"in_app_enabled": true
+},
+"withdrawal_processing": {
+"push_enabled": true,
+"in_app_enabled": true
+},
+"withdrawal_completed": {
+"push_enabled": true,
+"in_app_enabled": true
+},
+"withdrawal_failed": {
+"push_enabled": true,
+"in_app_enabled": true
+},
+"broadcast": {
+"push_enabled": true,
+"in_app_enabled": true
+}
+}
+}
+}
+5.2  Update Notification Preferences
+👤
+User Story:  As a user, I want to toggle specific notification types on or off — for example turning off push notifications for new likes but keeping them on for tips and withdrawals.
+PATCH
+/api/v1/notifications/preferences
+Update Preferences
+Auth Required
+Yes — Authorization: Bearer {access_token}
+Note
+Only send the types you want to change. Omitted types remain unchanged. Partial update.
+Note
+broadcast push_enabled cannot be set to false by users — admin broadcasts always deliver push. broadcast in_app_enabled is user-controllable.
+📤  Request Body (only changed types needed)
+{
+"new_like": {
+"push_enabled": false
+},
+"comment_like": {
+"push_enabled": false,
+"in_app_enabled": false
+},
+"room_member_joined": {
+"push_enabled": false
+}
+}
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"message": "Notification preferences updated.",
+"data": {
+"updated_types": [
+"new_like",
+"comment_like",
+"room_member_joined"
+],
+"preferences": {
+"new_like": {
+"push_enabled": false,
+"in_app_enabled": true
+},
+"comment_like": {
+"push_enabled": false,
+"in_app_enabled": false
+},
+"room_member_joined": {
+"push_enabled": false,
+"in_app_enabled": true
+}
+}
+}
+}
+6. Admin — Notifications
+ℹ️
+Admin notification endpoints allow the platform team to send broadcast messages to all users or targeted messages to specific users — for example announcing a new feature, warning a creator about policy violations, or notifying a user of an account action.
+6.1  Send a Broadcast Notification (All Users)
+👤
+User Story:  As an admin, I want to send a push notification and in-app notification to all Tamkko users at once — for example to announce a new feature or a major event.
+POST
+/api/v1/admin/notifications/broadcast
+Broadcast Notification
+Auth Required
+Yes — Admin JWT
+Delivery
+Queued as a Celery task. Large user bases are sent in batches of 100 tokens (Expo API limit). The response returns immediately — actual delivery happens in the background.
+Rate Limit
+1 broadcast per hour. Prevents accidental spam to all users.
+📤  Request Body
+{
+"title": "🎉 Tamkko now supports video duets!",
+"body": "You can now duet any creator's video. Tap to learn more.",
+"data": {
+"screen": "/(tabs)/home",
+"params": {}
+},
+"target_countries": [
+"GH"
+],
+"schedule_at": null
+}
+target_countries: Optional array of ISO country codes to filter recipients. Omit or set to null to send to all countries.
+schedule_at: ISO datetime string to schedule the broadcast for a future time. Set to null to send immediately.
+200
+OK — Broadcast queued
+✅  Response Body
+{
+"status": "success",
+"message": "Broadcast notification queued for delivery.",
+"data": {
+"broadcast_id": "bcast_z1y2x3w4",
+"estimated_recipients": 15400,
+"status": "queued",
+"scheduled_at": null,
+"created_at": "2025-03-01T15:00:00Z"
+}
+}
+6.2  Send a Targeted Notification (Specific Users)
+👤
+User Story:  As an admin, I want to send a notification to one or more specific users — for example notifying a creator that their account was reviewed, or warning a user about a policy violation.
+POST
+/api/v1/admin/notifications/targeted
+Targeted Notification
+Auth Required
+Yes — Admin JWT
+Limit
+Max 500 user IDs per request
+📤  Request Body
+{
+"user_ids": [
+"usr_8k2m9x4p",
+"usr_x1y2z3"
+],
+"title": "Action required: Please review our updated community guidelines",
+"body": "We have updated our guidelines. Please review them to keep your account in good standing.",
+"data": {
+"screen": "/(tabs)/home",
+"params": {}
+},
+"type": "account_warning"
+}
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"data": {
+"broadcast_id": "bcast_v5u6t7s8",
+"recipients": 2,
+"status": "queued"
+}
+}
+6.3  Get Broadcast History
+GET
+/api/v1/admin/notifications/broadcasts
+Broadcast History
+Query Params
+page, limit (default 20), status (queued | sending | completed | failed)
+✅  Response (200 OK)
+{
+"status": "success",
+"data": {
+"broadcasts": [
+{
+"id": "bcast_z1y2x3w4",
+"title": "🎉 Tamkko now supports video duets!",
+"status": "completed",
+"estimated_recipients": 15400,
+"delivered": 15287,
+"failed": 113,
+"created_by": "admin_user_1",
+"created_at": "2025-03-01T15:00:00Z",
+"completed_at": "2025-03-01T15:04:23Z"
+}
+],
+"pagination": {
+"current_page": 1,
+"total_pages": 3,
+"total_broadcasts": 58
+}
+}
+}
+6.4  Get Notification Delivery Stats
+👤
+User Story:  As an admin, I want to see overall notification delivery statistics — how many pushes were sent, delivered, and failed — so I can monitor the health of the notification pipeline.
+GET
+/api/v1/admin/notifications/stats
+Delivery Stats
+Query Params
+period (7d | 30d — default 7d)
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"data": {
+"period": "7d",
+"total_sent": 284000,
+"total_delivered": 279320,
+"total_failed": 4680,
+"delivery_rate_percent": 98.4,
+"by_type": {
+"new_tip": {
+"sent": 8400,
+"delivered": 8380
+},
+"new_comment": {
+"sent": 52000,
+"delivered": 51200
+},
+"video_live": {
+"sent": 120000,
+"delivered": 118000
+}
+},
+"invalid_tokens_removed": 210,
+"active_device_tokens": 12840
+}
+}
+7. Error Code Reference
+Error Code
+HTTP
+Description
+TOKEN_ALREADY_REGISTERED
+409
+Push token already registered for this user — safe to ignore, upsert succeeded
+TOKEN_NOT_FOUND
+404
+Push token not found for this user — already deregistered or never registered
+INVALID_EXPO_TOKEN
+400
+Token string is not a valid Expo Push Token format (must start with ExponentPushToken[)
+NOTIFICATION_NOT_FOUND
+404
+Notification with the given ID does not exist or belongs to another user
+INVALID_NOTIFICATION_TYPE
+400
+Notification type string is not recognised — check the types reference table
+BROADCAST_RATE_LIMITED
+429
+A broadcast was already sent within the last hour — wait before sending another
+BROADCAST_NOT_FOUND
+404
+Broadcast record with the given ID does not exist
+TOO_MANY_TARGET_USERS
+400
+Targeted notification exceeds the 500 user ID limit per request
+PUSH_DELIVERY_FAILED
+500
+Expo Push API returned an error for one or more tokens — check delivery stats
+PERMISSION_DENIED
+403
+User does not have admin permission for this endpoint
+INTERNAL_SERVER_ERROR
+500
+Unexpected server error — logged to Sentry automatically

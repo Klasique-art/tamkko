@@ -1,0 +1,1044 @@
+TAMKKO
+API & User Story Documentation
+Phase 1 — MVP
+Module
+Tipping & Creator Wallet
+Version
+1.0.0
+Base URL
+https://api.tamkko.app/api/v1
+Payment Provider
+MTN Mobile Money (Phase 1 — Ghana only)
+Currency
+GHS (Ghana Cedis) — all amounts in GHS
+Frontend
+React Native (Expo SDK 51+)
+Backend
+Django 5.x + DRF
+Depends On
+Authentication module, Video Feed module
+Table of Contents
+1.  Technology Stack & Dependencies
+2.  Tipping & Wallet — Architecture & Concepts
+2.1  Money Flow Overview
+2.2  MTN Mobile Money Integration (Hubtel Gateway)
+2.3  Platform Fee & Creator Earnings Split
+2.4  Wallet Balance vs Pending vs Available
+3.  Tipping a Creator
+3.1  Initiate a Tip (Start MoMo Payment)
+3.2  MoMo Payment Callback (Webhook — Hubtel to Backend)
+3.3  Check Tip Payment Status (Frontend Polling)
+3.4  Get Tips Sent by Me
+3.5  Get Tips Received on a Video
+4.  Creator Subscriptions (Premium Content Access)
+4.1  Subscribe to a Creator (Start MoMo Payment)
+4.2  Check Subscription Payment Status & Confirm Access
+4.3  Cancel Subscription
+4.4  Get My Active Subscriptions
+5.  Creator Wallet
+5.1  Get My Wallet Balance & Summary
+5.2  Get Wallet Transaction History
+5.3  Get Earnings Breakdown (By Video)
+6.  Withdrawals
+6.1  Add / Update Mobile Money Account
+6.2  Get Saved Mobile Money Account
+6.3  Initiate Withdrawal
+6.4  Check Withdrawal Status
+6.5  Get Withdrawal History
+7.  Admin — Payments & Wallet
+7.1  List All Transactions (Admin)
+7.2  Get Transaction Detail (Admin)
+7.3  List All Withdrawal Requests (Admin)
+7.4  Approve / Reject Withdrawal (Manual Override)
+7.5  Get Platform Revenue Summary
+8.  Error Code Reference
+1. Technology Stack & Dependencies
+All packages below are required for the Tipping & Wallet module. MTN MoMo payments in Ghana are processed via the Hubtel payment gateway, which provides a REST API that wraps the MTN MoMo API and handles the USSD push prompt to the user's phone.
+1.1  Backend — Django / Python
+Category
+Package / Service
+Purpose
+Payment Gateway
+Hubtel Payments API
+MTN MoMo charge initiation, status polling, and webhook callbacks for Ghana
+HTTP Client
+httpx
+Async HTTP calls to the Hubtel API from Django/Celery
+Task Queue
+celery + redis
+Background jobs: poll Hubtel for payment status, process webhook retries, schedule auto-payouts
+Database
+PostgreSQL (via Django ORM)
+Wallet balances, transactions, withdrawal records
+Decimal Math
+Python decimal.Decimal
+All monetary values stored and computed as Decimal — NEVER float to avoid rounding errors
+Idempotency
+UUID (python uuid4)
+Every payment initiation generates a unique idempotency key to prevent double charges
+Env / Secrets
+python-decouple
+Hubtel API key, secret, callback URL stored in .env — never hardcoded
+Rate Limiting
+django-ratelimit
+Throttle tip and withdrawal initiation endpoints
+Sentry
+sentry-sdk
+Payment error tracking and alerting
+1.2  Frontend — React Native (Expo)
+Category
+Package / Service
+Purpose
+Phone Input
+react-native-phone-number-input
+MoMo number entry with +233 Ghana default and international flag picker
+Payment Polling
+axios + setInterval
+Poll tip/withdrawal status endpoint every 3 seconds while awaiting MoMo USSD confirmation
+Wallet State
+zustand
+Store wallet balance, pending amounts, and transaction list in global state
+Currency Format
+Intl.NumberFormat (JS built-in)
+Format GHS amounts as 'GHS 12.50' — always 2 decimal places
+Animations
+react-native-reanimated
+Tip celebration animation (coin burst) on successful tip
+Bottom Sheet
+@gorhom/bottom-sheet
+Tip amount selection and MoMo number entry UI as a sliding bottom sheet
+Haptics
+expo-haptics
+Haptic feedback on tip success and payment confirmation
+2. Tipping & Wallet — Architecture & Concepts
+2.1  Money Flow Overview
+ℹ️
+All monetary values in the Tamkko API are in Ghana Cedis (GHS). Amounts are always represented as decimal numbers with exactly 2 decimal places (e.g. 10.00, 0.50). Never use integers for money. Never use JavaScript float arithmetic for money calculations — always use string-represented decimals from the API.
+Complete money flow for a tip:
+Viewer decides to tip a creator. Opens the tip bottom sheet and selects or types an amount (e.g. GHS 10.00). Enters their MTN MoMo number.
+Expo app calls POST /api/v1/tips — backend creates a tip record (status: pending) and calls the Hubtel API to initiate a MoMo USSD push to the viewer's phone.
+The viewer's phone receives a USSD prompt from MTN: 'Approve payment of GHS 10.00 to Tamkko? Press 1 to confirm.' The viewer approves on their phone.
+MTN confirms the deduction to Hubtel. Hubtel sends a webhook callback to POST /api/v1/webhooks/hubtel with the payment result.
+The backend webhook handler marks the tip as completed, credits the creator's wallet (minus the platform fee), and sends push notifications to both the viewer (tip sent confirmation) and the creator (you received a tip!).
+The creator's wallet balance increases immediately. The funds are held as 'available_balance'. The creator can withdraw to their registered MTN MoMo account at any time above the minimum withdrawal threshold.
+On withdrawal, the backend calls Hubtel's payout API to send GHS directly to the creator's MoMo number. The balance is debited and a withdrawal record is created.
+2.2  MTN Mobile Money Integration (Hubtel Gateway)
+Why Hubtel instead of the MTN MoMo API directly?
+The MTN MoMo API requires direct partnership and certification with MTN Ghana — a lengthy process not suitable for Phase 1. Hubtel is a Ghanaian fintech company that provides a simplified REST API wrapping MTN MoMo, Vodafone Cash, and AirtelTigo Money. It handles the USSD push flow, reconciliation, and has sandbox/live environments. Using Hubtel means faster integration, no MTN certification needed, and support for multiple mobile wallets in Phase 2 with the same API.
+Hubtel payment flow (technical detail):
+Backend calls POST https://api.hubtel.com/v2/pos/onlinecheckout/direct-pay/mobile-money with the amount, customer MoMo number, reference (Tamkko tip ID), and callback URL.
+Hubtel sends a USSD push to the customer's phone. The customer sees a prompt like: 'Confirm payment of GHS 10.00 to Tamkko. Enter PIN to approve.'
+The customer enters their MoMo PIN on their phone. MTN processes the payment and notifies Hubtel.
+Hubtel sends a POST request to the Tamkko backend callback URL (POST /api/v1/webhooks/hubtel) with the payment result: {Status: 'TXN_SUCCESS'} or {Status: 'TXN_FAILED'}.
+The Tamkko backend verifies the Hubtel webhook signature, updates the tip/payment record status, and triggers the downstream actions (wallet credit, notifications).
+⚠️
+The USSD push prompt and PIN entry happen entirely on the customer's phone via MTN's network — Tamkko never sees or handles the customer's MoMo PIN. Tamkko only initiates the payment request and receives the result callback. This is the standard secure MoMo integration pattern.
+2.3  Platform Fee & Creator Earnings Split
+Phase 1 fee structure:
+Payment Type
+Platform Fee
+Creator Receives
+Tip on a video
+15%
+85% of tip amount
+Creator subscription (monthly)
+20%
+80% of subscription price
+VIP room tip
+15%
+85% of tip amount
+Withdrawal
+0% (free for creator)
+Full available balance up to withdrawal limit
+Example: Viewer tips GHS 10.00. Platform takes GHS 1.50 (15%). Creator wallet is credited GHS 8.50. The Hubtel processing fee (~1.5% of the transaction) is absorbed by the platform from its 15% share.
+2.4  Wallet Balance vs Pending vs Available
+total_balance — The sum of all earnings ever credited to the wallet. Read-only historical figure.
+pending_balance — Earnings from tips/unlocks where the MoMo payment is still processing (status: pending or processing). These funds cannot be withdrawn yet.
+available_balance — Funds that are fully settled and ready to withdraw. This is total_balance minus pending_balance minus already_withdrawn.
+withdrawn_total — Total amount the creator has successfully withdrawn to their MoMo account over all time.
+minimum_withdrawal — GHS 10.00. Creators cannot withdraw less than this amount.
+maximum_withdrawal_per_day — GHS 2,000.00. Hubtel imposes this limit per account per day.
+3. Tipping a Creator
+ℹ️
+Any authenticated user with a verified phone number can tip any creator on any video. Tipping is done in GHS. The minimum tip is GHS 1.00. There is no maximum tip limit in Phase 1. The tipper's MTN MoMo number is charged directly via USSD push.
+3.1  Initiate a Tip (Start MoMo Payment)
+👤
+User Story:  As a viewer watching a video, I want to open the tip panel, choose an amount (or type a custom amount), enter my MTN MoMo number, and send a tip to the creator. I then approve the payment on my phone via the USSD prompt that MTN sends me.
+POST
+/api/v1/tips
+Initiate Tip
+Auth Required
+Yes — Authorization: Bearer {access_token}
+Rate Limit
+3 tip initiations per minute per user (prevents accidental double-tipping)
+Idempotency
+The frontend should generate a UUID and send it as X-Idempotency-Key header. If the same key is sent twice, the second request returns the existing tip record instead of creating a new charge.
+Note
+A user cannot tip their own videos. Returns 403 CANNOT_TIP_OWN_VIDEO if attempted.
+📤  Request Body
+{
+"video_id": "vid_7k3m8n2p",
+"creator_id": "usr_8k2m9x4p",
+"amount_ghs": "10.00",
+"momo_number": "+233241234567",
+"momo_provider": "MTN",
+"message": "Keep up the great content! 🔥"
+}
+momo_provider accepted values: MTN | VODAFONE | AIRTELTIGO — Phase 1 supports MTN only. Vodafone and AirtelTigo will be added in Phase 2.
+message is optional. Max 150 characters. Shown to the creator on the tip notification.
+201
+Created — Tip initiated, USSD push sent to tipper's phone
+✅  Response Body
+{
+"status": "success",
+"message": "Payment initiated. Please approve the MTN MoMo prompt on your phone.",
+"data": {
+"tip_id": "tip_4m5n6p7q",
+"status": "pending",
+"amount_ghs": "10.00",
+"creator_earnings_ghs": "8.50",
+"platform_fee_ghs": "1.50",
+"momo_number": "+233241234567",
+"momo_provider": "MTN",
+"ussd_prompt_sent": true,
+"expires_at": "2025-03-01T10:05:00Z",
+"poll_url": "/api/v1/tips/tip_4m5n6p7q/status"
+}
+}
+After receiving this response, the Expo app must start polling GET /api/v1/tips/{tip_id}/status every 3 seconds until status changes from 'pending' to 'completed' or 'failed'. Show a 'Waiting for MoMo approval...' spinner to the user during this time.
+400
+Bad Request — Validation error
+❌  Error Response
+{
+"status": "error",
+"message": "Validation failed",
+"errors": {
+"amount_ghs": [
+"Minimum tip amount is GHS 1.00"
+],
+"momo_provider": [
+"Only MTN MoMo is supported in Phase 1"
+],
+"momo_number": [
+"Invalid MTN Ghana phone number format. Must start with +23324, +23354, or +23355"
+]
+}
+}
+403
+Forbidden — Cannot tip own video
+❌  Error Response
+{
+"status": "error",
+"message": "You cannot tip your own video.",
+"code": "CANNOT_TIP_OWN_VIDEO"
+}
+3.2  MoMo Payment Callback (Webhook — Hubtel to Backend)
+👤
+User Story:  As the system, when Hubtel notifies the backend that a MoMo payment was approved or rejected by the user, I need to update the tip status, credit the creator's wallet, and send push notifications to both parties.
+ℹ️
+This endpoint is called by the Hubtel payment gateway — NOT by the Expo frontend. The frontend should never call this directly. The backend must verify the Hubtel-Signature header on every incoming webhook before processing.
+POST
+/api/v1/webhooks/hubtel
+Hubtel Payment Callback
+Auth Required
+No — but must verify Hubtel-Signature header using HMAC-SHA256
+Security
+Backend verifies signature: HMAC-SHA256(payload_body, HUBTEL_WEBHOOK_SECRET). Reject any request where signature does not match.
+Idempotency
+Hubtel may send the same webhook more than once. The backend must be idempotent — if the tip is already 'completed', ignore duplicate callbacks.
+📥  Hubtel Webhook Payload (Success)
+{
+"ResponseCode": "0000",
+"Status": "TXN_SUCCESS",
+"Data": {
+"TransactionId": "HBT-20250301-001234",
+"ClientReference": "tip_4m5n6p7q",
+"Amount": 10,
+"Charges": 0.15,
+"AmountAfterCharges": 9.85,
+"PhoneNumber": "0241234567",
+"Description": "Tamkko tip payment",
+"CreatedAt": "2025-03-01T10:02:30Z"
+}
+}
+📥  Hubtel Webhook Payload (Failed / Rejected)
+{
+"ResponseCode": "1001",
+"Status": "TXN_FAILED",
+"Data": {
+"TransactionId": "HBT-20250301-001235",
+"ClientReference": "tip_4m5n6p7q",
+"Amount": 10,
+"Description": "User cancelled payment",
+"CreatedAt": "2025-03-01T10:03:00Z"
+}
+}
+Backend processing on TXN_SUCCESS:
+Look up the tip record by ClientReference (tip_id).
+Verify Amount matches the tip amount in the database — reject if mismatched.
+Mark tip status as 'completed'.
+Credit creator's wallet: available_balance += (tip_amount_ghs × 0.85). Record the transaction.
+Record platform revenue: platform_revenue += (tip_amount_ghs × 0.15).
+Send push notification to creator: 'You received a GHS 10.00 tip from @viewer on your video!'
+Send push notification to tipper: 'Your GHS 10.00 tip to @creator was sent successfully!'
+Increment the video's tips_count stat.
+Backend processing on TXN_FAILED:
+Mark tip status as 'failed' with failure_reason from the webhook.
+Do NOT credit the creator's wallet.
+Send push notification to tipper: 'Your tip payment was not completed. No charge was made.'
+3.3  Check Tip Payment Status (Frontend Polling)
+👤
+User Story:  As a viewer who initiated a tip, I want the app to check whether my MoMo payment was approved so I can see a success or failure message without having to refresh the app.
+GET
+/api/v1/tips/{tip_id}/status
+Tip Status
+Auth Required
+Yes — must be the user who initiated the tip
+Polling interval
+Every 3 seconds. Stop polling when status is 'completed' or 'failed'.
+Timeout
+Stop polling after 5 minutes. If still pending, show 'Payment is taking longer than expected. Check your MoMo messages.'
+200
+OK
+✅  Response — Pending (keep polling)
+{
+"status": "success",
+"data": {
+"tip_id": "tip_4m5n6p7q",
+"status": "pending",
+"message": "Waiting for MoMo approval on your phone..."
+}
+}
+✅  Response — Completed (stop polling, show success)
+{
+"status": "success",
+"data": {
+"tip_id": "tip_4m5n6p7q",
+"status": "completed",
+"amount_ghs": "10.00",
+"creator": {
+"username": "kwame_creates",
+"display_name": "Kwame Asante",
+"profile_picture": "https://cdn.tamkko.app/avatars/usr_8k2m9x4p.jpg"
+},
+"message": "Your GHS 10.00 tip was sent to Kwame Asante!",
+"completed_at": "2025-03-01T10:02:45Z"
+}
+}
+✅  Response — Failed (stop polling, show error)
+{
+"status": "success",
+"data": {
+"tip_id": "tip_4m5n6p7q",
+"status": "failed",
+"failure_reason": "Payment was cancelled or rejected by the user.",
+"message": "Your tip was not sent. No charge was made to your MoMo account.",
+"can_retry": true
+}
+}
+3.4  Get Tips Sent by Me
+👤
+User Story:  As a viewer, I want to see a history of all tips I have sent, including which creator and video I tipped and whether the payment was successful.
+GET
+/api/v1/tips/sent
+Tips Sent
+Auth Required
+Yes — Authorization: Bearer {access_token}
+Query Params
+cursor, limit (default 20), status (completed | failed | pending)
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"data": {
+"tips": [
+{
+"tip_id": "tip_4m5n6p7q",
+"amount_ghs": "10.00",
+"status": "completed",
+"message": "Keep up the great content! 🔥",
+"creator": {
+"username": "kwame_creates",
+"display_name": "Kwame Asante",
+"profile_picture": "https://cdn.tamkko.app/avatars/usr_8k2m9x4p.jpg"
+},
+"video": {
+"id": "vid_7k3m8n2p",
+"title": "Accra sunset vibes 🌅",
+"thumbnail_url": "https://customer-xyz.cloudflarestream.com/ea95132c/thumbnails/thumbnail.jpg"
+},
+"created_at": "2025-03-01T10:02:45Z"
+}
+],
+"next_cursor": "cursor_tip_abc",
+"has_more": false
+}
+}
+3.5  Get Tips Received on a Video
+👤
+User Story:  As a creator, I want to see who tipped on a specific video and how much, so I can thank my supporters and understand which content drives the most tips.
+GET
+/api/v1/videos/{video_id}/tips
+Video Tips
+Auth Required
+Yes — must be the video creator or an admin
+Query Params
+cursor, limit (default 20)
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"data": {
+"video_id": "vid_7k3m8n2p",
+"total_tips_ghs": "185.50",
+"total_tip_count": 23,
+"tips": [
+{
+"tip_id": "tip_4m5n6p7q",
+"amount_ghs": "10.00",
+"creator_earned_ghs": "8.50",
+"message": "Keep up the great content! 🔥",
+"tipper": {
+"username": "fan_user_1",
+"display_name": "Ama Mensah",
+"profile_picture": "https://cdn.tamkko.app/avatars/usr_x1y2z3.jpg"
+},
+"created_at": "2025-03-01T10:02:45Z"
+}
+],
+"next_cursor": "cursor_vtip_abc",
+"has_more": true
+}
+}
+4. Creator Subscriptions (Premium Content Access)
+ℹ️
+When a creator marks videos as 'premium', viewers must subscribe to that creator to access all their premium content. A subscription is a recurring monthly charge — not a per-video payment. Once subscribed, the viewer can watch all of the creator's premium videos for the full billing month. The viewer can cancel at any time; access continues until the end of the paid period. The payment flow uses MoMo USSD push via Hubtel, identical to tipping. Each creator sets their own monthly subscription price.
+4.1  Subscribe to a Creator (Start MoMo Payment)
+👤
+User Story:  As a viewer who wants to watch a creator's premium videos, I want to subscribe to them with a monthly MoMo payment so I get access to all their premium content for the month. I can cancel at any time and my access stays active until the current billing period ends.
+POST
+/api/v1/creators/{creator_id}/subscribe
+Subscribe to Creator
+Auth Required
+Yes — Authorization: Bearer {access_token}
+Rate Limit
+3 subscription initiations per minute per user
+Note
+If the viewer already has an active subscription to this creator, returns 409 ALREADY_SUBSCRIBED with the existing subscription details — no new charge is made.
+Note
+A creator cannot subscribe to themselves. Returns 403 CANNOT_SUBSCRIBE_TO_SELF if attempted.
+📤  Request Body
+{
+"momo_number": "+233241234567",
+"momo_provider": "MTN"
+}
+201
+Created — Subscription payment initiated
+✅  Response Body
+{
+"status": "success",
+"message": "Payment initiated. Approve the MTN MoMo prompt on your phone to activate your subscription.",
+"data": {
+"subscription_id": "sub_8r9s0t1u",
+"creator_id": "usr_8k2m9x4p",
+"amount_ghs": "25.00",
+"billing_period": "monthly",
+"status": "pending",
+"ussd_prompt_sent": true,
+"expires_at": "2025-03-01T10:10:00Z",
+"poll_url": "/api/v1/creators/usr_8k2m9x4p/subscribe/sub_8r9s0t1u/status"
+}
+}
+After receiving this response, the Expo app must poll GET /api/v1/creators/{creator_id}/subscribe/{subscription_id}/status every 3 seconds until status changes from 'pending' to 'active' or 'failed'. Show a 'Waiting for MoMo approval...' spinner during this time.
+409
+Conflict — Already subscribed
+❌  Already Subscribed Response
+{
+"status": "error",
+"message": "You already have an active subscription to this creator.",
+"code": "ALREADY_SUBSCRIBED",
+"data": {
+"subscription_id": "sub_8r9s0t1u",
+"status": "active",
+"subscribed_at": "2025-02-01T09:00:00Z",
+"access_expires_at": "2025-03-01T09:00:00Z"
+}
+}
+4.2  Check Subscription Payment Status & Confirm Access
+👤
+User Story:  As a viewer who just initiated a subscription, I want the app to confirm the MoMo payment was approved so my subscription is activated and I can immediately start watching all of the creator's premium videos.
+GET
+/api/v1/creators/{creator_id}/subscribe/{subscription_id}/status
+Subscription Status
+Polling
+Every 3 seconds until status is 'active' or 'failed'.
+✅  Response — Active (stop polling, grant access)
+{
+"status": "success",
+"data": {
+"subscription_id": "sub_8r9s0t1u",
+"status": "active",
+"creator": {
+"id": "usr_8k2m9x4p",
+"username": "kwame_creates",
+"display_name": "Kwame Asante",
+"profile_picture": "https://cdn.tamkko.app/avatars/usr_8k2m9x4p.jpg"
+},
+"amount_ghs": "25.00",
+"billing_period": "monthly",
+"subscribed_at": "2025-03-01T10:02:45Z",
+"next_billing_date": "2025-04-01T10:02:45Z",
+"access_expires_at": "2025-04-01T10:02:45Z",
+"message": "Subscription active! You now have access to all of Kwame Asante's premium videos.",
+"auto_renew": true
+}
+}
+✅  Response — Failed (stop polling, show error)
+{
+"status": "success",
+"data": {
+"subscription_id": "sub_8r9s0t1u",
+"status": "failed",
+"failure_reason": "Payment was cancelled or rejected by the user.",
+"message": "Subscription was not activated. No charge was made to your MoMo account.",
+"can_retry": true
+}
+}
+How premium video access works after subscription: Once a subscription is 'active', the backend issues signed Cloudflare Stream playback tokens on-demand whenever the subscriber requests a premium video from that creator (GET /api/v1/videos/{video_id}). The frontend does not need to do anything special — the signed playback_url is included automatically in the video response for subscribers. Tokens expire after 1 hour and are refreshed transparently on each video load.
+4.3  Cancel Subscription
+👤
+User Story:  As a subscriber, I want to cancel my subscription to a creator so I am not charged again next month. I should still have access to their premium videos until the end of the current billing period.
+DELETE
+/api/v1/creators/{creator_id}/subscribe
+Cancel Subscription
+Auth Required
+Yes — Authorization: Bearer {access_token}
+Behaviour
+Cancellation stops future auto-renewal. Access remains active until access_expires_at. No refund is issued for the current period.
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"message": "Subscription cancelled. You will continue to have access to Kwame Asante's premium videos until 1 April 2025.",
+"data": {
+"subscription_id": "sub_8r9s0t1u",
+"status": "cancelled",
+"access_expires_at": "2025-04-01T10:02:45Z",
+"auto_renew": false
+}
+}
+4.4  Get My Active Subscriptions
+👤
+User Story:  As a viewer, I want to see a list of all the creators I am currently subscribed to, when each subscription renews, and how much I am being charged per month.
+GET
+/api/v1/subscriptions
+My Subscriptions
+Auth Required
+Yes — Authorization: Bearer {access_token}
+Query Params
+status (active | cancelled | expired | all — default active), cursor, limit (default 20)
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"data": {
+"subscriptions": [
+{
+"subscription_id": "sub_8r9s0t1u",
+"status": "active",
+"creator": {
+"id": "usr_8k2m9x4p",
+"username": "kwame_creates",
+"display_name": "Kwame Asante",
+"profile_picture": "https://cdn.tamkko.app/avatars/usr_8k2m9x4p.jpg"
+},
+"amount_ghs": "25.00",
+"billing_period": "monthly",
+"subscribed_at": "2025-03-01T10:02:45Z",
+"next_billing_date": "2025-04-01T10:02:45Z",
+"access_expires_at": "2025-04-01T10:02:45Z",
+"auto_renew": true
+}
+],
+"total_monthly_spend_ghs": "25.00",
+"next_cursor": null,
+"has_more": false
+}
+}
+5. Creator Wallet
+5.1  Get My Wallet Balance & Summary
+👤
+User Story:  As a creator, I want to open my wallet page and see my current available balance, pending earnings, total earned to date, and a count of recent tips.
+GET
+/api/v1/wallet
+Get Wallet
+Auth Required
+Yes — Authorization: Bearer {access_token}
+Note
+Phone must be verified. Unverified accounts return 403 PHONE_NOT_VERIFIED.
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"data": {
+"wallet": {
+"id": "wlt_k1l2m3n4",
+"owner_id": "usr_8k2m9x4p",
+"currency": "GHS",
+"available_balance": "1230.50",
+"pending_balance": "200.00",
+"total_earned": "3450.00",
+"total_withdrawn": "2019.50",
+"minimum_withdrawal": "10.00",
+"maximum_withdrawal_per_day": "2000.00",
+"can_withdraw": true,
+"momo_account_saved": true,
+"tips_this_month": 47,
+"earnings_this_month_ghs": "820.00",
+"last_updated": "2025-03-01T10:30:00Z"
+}
+}
+}
+5.2  Get Wallet Transaction History
+👤
+User Story:  As a creator, I want to see a detailed log of every credit and debit on my wallet — tips received, subscription earnings, and withdrawals — so I have a full audit trail of my earnings.
+GET
+/api/v1/wallet/transactions
+Wallet Transactions
+Auth Required
+Yes — Authorization: Bearer {access_token}
+Query Params
+cursor, limit (default 20), type (credit | debit | all), start_date, end_date (ISO date strings)
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"data": {
+"transactions": [
+{
+"id": "txn_a1b2c3d4",
+"type": "credit",
+"subtype": "tip",
+"amount_ghs": "8.50",
+"gross_amount_ghs": "10.00",
+"platform_fee_ghs": "1.50",
+"balance_after_ghs": "1230.50",
+"description": "Tip from @fan_user_1 on 'Accra sunset vibes 🌅'",
+"reference_id": "tip_4m5n6p7q",
+"reference_type": "tip",
+"status": "completed",
+"created_at": "2025-03-01T10:02:45Z"
+},
+{
+"id": "txn_e5f6g7h8",
+"type": "debit",
+"subtype": "withdrawal",
+"amount_ghs": "500.00",
+"gross_amount_ghs": "500.00",
+"platform_fee_ghs": "0.00",
+"balance_after_ghs": "730.50",
+"description": "Withdrawal to MTN MoMo +233241234567",
+"reference_id": "wdr_9i0j1k2l",
+"reference_type": "withdrawal",
+"status": "completed",
+"created_at": "2025-02-28T14:00:00Z"
+}
+],
+"summary": {
+"total_credits_ghs": "3450.00",
+"total_debits_ghs": "2019.50",
+"net_ghs": "1430.50"
+},
+"next_cursor": "cursor_txn_abc",
+"has_more": true
+}
+}
+5.3  Get Earnings Breakdown (By Video)
+👤
+User Story:  As a creator, I want to see which of my videos are earning the most tips and unlocks so I know what content my audience values.
+GET
+/api/v1/wallet/earnings/by-video
+Earnings By Video
+Auth Required
+Yes — Authorization: Bearer {access_token}
+Query Params
+period (7d | 30d | 90d | all — default 30d), sort (earnings | tips_count | views)
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"data": {
+"period": "30d",
+"total_earnings_ghs": "820.00",
+"videos": [
+{
+"video_id": "vid_7k3m8n2p",
+"title": "Accra sunset vibes 🌅",
+"thumbnail_url": "https://customer-xyz.cloudflarestream.com/ea95132c/thumbnails/thumbnail.jpg",
+"tips_count": 23,
+"tips_earnings_ghs": "185.50",
+"subscriptions_count": 0,
+"subscriptions_earnings_ghs": "0.00",
+"total_earnings_ghs": "185.50",
+"views": 14820
+}
+]
+}
+}
+6. Withdrawals
+ℹ️
+Withdrawals send the creator's available balance directly to their registered MTN MoMo account via Hubtel's payout API. Withdrawals are processed automatically in real time during business hours (6 AM – 10 PM GMT). Requests outside these hours are queued and processed at 6 AM the next day. There is no withdrawal fee — creators receive the full available amount they request.
+6.1  Add / Update Mobile Money Account
+👤
+User Story:  As a creator, I want to register my MTN MoMo number as my withdrawal account so the platform knows where to send my earnings. I can only have one MoMo account registered at a time. Changing it requires OTP verification.
+PUT
+/api/v1/wallet/momo-account
+Save MoMo Account
+Auth Required
+Yes — Authorization: Bearer {access_token}
+OTP Required
+Yes — an OTP must be sent to the new MoMo number first (purpose: phone_change) and verified. Include the action_token from the OTP verify response.
+Note
+Only one MoMo account per wallet. Saving a new one replaces the old one. Previous withdrawals are not affected.
+📤  Request Body
+{
+"momo_number": "+233241234567",
+"momo_provider": "MTN",
+"account_name": "Kwame Asante",
+"action_token": "act_b7c8d9e0f1a2"
+}
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"message": "MoMo account saved. You can now withdraw your earnings.",
+"data": {
+"momo_number": "+233241234567",
+"momo_provider": "MTN",
+"account_name": "Kwame Asante",
+"verified": true,
+"saved_at": "2025-03-01T11:00:00Z"
+}
+}
+6.2  Get Saved Mobile Money Account
+GET
+/api/v1/wallet/momo-account
+Get MoMo Account
+Auth Required
+Yes — Authorization: Bearer {access_token}
+✅  Response (200 OK)
+{
+"status": "success",
+"data": {
+"momo_number": "+233241****567",
+"momo_provider": "MTN",
+"account_name": "Kwame Asante",
+"verified": true
+}
+}
+Note: The MoMo number is masked in the response for security. Only the last 3 digits are shown.
+6.3  Initiate Withdrawal
+👤
+User Story:  As a creator with available earnings, I want to withdraw money to my registered MTN MoMo account by entering the amount and confirming with an OTP.
+POST
+/api/v1/wallet/withdraw
+Initiate Withdrawal
+Auth Required
+Yes — Authorization: Bearer {access_token}
+OTP Required
+Yes — purpose: withdrawal. Include action_token from OTP verify response.
+Minimum
+GHS 10.00 per withdrawal
+Maximum
+GHS 2,000.00 per day (Hubtel limit)
+Rate Limit
+1 withdrawal initiation per minute
+Note
+MoMo account must be registered first (Section 6.1). Returns 400 NO_MOMO_ACCOUNT if not set.
+📤  Request Body
+{
+"amount_ghs": "500.00",
+"action_token": "act_w3x4y5z6a7"
+}
+201
+Created — Withdrawal initiated
+✅  Response Body
+{
+"status": "success",
+"message": "Withdrawal initiated. GHS 500.00 will be sent to your MTN MoMo account.",
+"data": {
+"withdrawal_id": "wdr_9i0j1k2l",
+"amount_ghs": "500.00",
+"status": "processing",
+"destination": "+233241****567",
+"provider": "MTN",
+"estimated_arrival": "Within 5 minutes",
+"new_available_balance": "730.50",
+"poll_url": "/api/v1/wallet/withdrawals/wdr_9i0j1k2l/status"
+}
+}
+400
+Bad Request — Insufficient balance or below minimum
+❌  Error Response
+{
+"status": "error",
+"message": "Insufficient available balance.",
+"code": "INSUFFICIENT_BALANCE",
+"data": {
+"requested_ghs": "500.00",
+"available_balance_ghs": "230.50",
+"pending_balance_ghs": "1000.00",
+"note": "Pending earnings are not yet available for withdrawal."
+}
+}
+6.4  Check Withdrawal Status
+👤
+User Story:  As a creator who initiated a withdrawal, I want to see if the money has been sent to my MoMo account.
+GET
+/api/v1/wallet/withdrawals/{withdrawal_id}/status
+Withdrawal Status
+✅  Response — Completed
+{
+"status": "success",
+"data": {
+"withdrawal_id": "wdr_9i0j1k2l",
+"status": "completed",
+"amount_ghs": "500.00",
+"destination": "+233241****567",
+"provider": "MTN",
+"hubtel_transaction_id": "HBT-20250301-005678",
+"message": "GHS 500.00 has been sent to your MTN MoMo account.",
+"completed_at": "2025-03-01T11:03:20Z"
+}
+}
+6.5  Get Withdrawal History
+GET
+/api/v1/wallet/withdrawals
+Withdrawal History
+Auth Required
+Yes — Authorization: Bearer {access_token}
+Query Params
+cursor, limit (default 20), status (completed | processing | failed)
+✅  Response (200 OK)
+{
+"status": "success",
+"data": {
+"withdrawals": [
+{
+"withdrawal_id": "wdr_9i0j1k2l",
+"amount_ghs": "500.00",
+"status": "completed",
+"destination": "+233241****567",
+"provider": "MTN",
+"created_at": "2025-03-01T11:00:00Z",
+"completed_at": "2025-03-01T11:03:20Z"
+}
+],
+"total_withdrawn_ghs": "2019.50",
+"next_cursor": "cursor_wdr_abc",
+"has_more": true
+}
+}
+7. Admin — Payments & Wallet
+ℹ️
+All admin endpoints require an admin JWT token and are prefixed with /api/v1/admin/. Regular users receive 403 PERMISSION_DENIED.
+7.1  List All Transactions (Admin)
+GET
+/api/v1/admin/transactions
+All Transactions
+Auth Required
+Yes — Admin JWT
+Query Params
+page, limit, type (tip | subscription | withdrawal), status, user_id, start_date, end_date, min_amount, max_amount
+✅  Response (200 OK)
+{
+"status": "success",
+"data": {
+"transactions": [
+{
+"id": "txn_a1b2c3d4",
+"type": "credit",
+"subtype": "tip",
+"amount_ghs": "8.50",
+"gross_amount_ghs": "10.00",
+"platform_fee_ghs": "1.50",
+"status": "completed",
+"tipper": {
+"id": "usr_x1y2z3",
+"username": "fan_user_1"
+},
+"creator": {
+"id": "usr_8k2m9x4p",
+"username": "kwame_creates"
+},
+"video_id": "vid_7k3m8n2p",
+"hubtel_transaction_id": "HBT-20250301-001234",
+"created_at": "2025-03-01T10:02:45Z"
+}
+],
+"pagination": {
+"current_page": 1,
+"total_pages": 200,
+"total_transactions": 4000
+}
+}
+}
+7.2  Get Transaction Detail (Admin)
+GET
+/api/v1/admin/transactions/{transaction_id}
+Transaction Detail
+Returns the full transaction record including all Hubtel API request/response payloads, webhook history, status change log, and associated wallet balance snapshots. Used for dispute resolution and auditing.
+7.3  List All Withdrawal Requests (Admin)
+GET
+/api/v1/admin/withdrawals
+All Withdrawals
+Query Params
+page, limit, status (processing | completed | failed | pending_approval), creator_id
+Note
+Most withdrawals are processed automatically. pending_approval status is only used when a withdrawal is flagged by the fraud detection system and requires manual admin review.
+7.4  Approve / Reject Withdrawal (Manual Override)
+👤
+User Story:  As an admin, I want to manually approve or reject a withdrawal that was flagged by the fraud detection system for review.
+PATCH
+/api/v1/admin/withdrawals/{withdrawal_id}/review
+Review Withdrawal
+📤  Request Body
+{
+"action": "approve",
+"notes": "Verified creator identity. Account legitimate. Approving withdrawal."
+}
+action values: approve (processes the payout immediately via Hubtel) | reject (cancels the withdrawal and returns funds to creator's available balance)
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"message": "Withdrawal approved and payout initiated.",
+"data": {
+"withdrawal_id": "wdr_9i0j1k2l",
+"action": "approve",
+"payout_initiated": true
+}
+}
+7.5  Get Platform Revenue Summary
+👤
+User Story:  As an admin, I want to see the total platform revenue from fees, broken down by time period and revenue type, so I can report on the financial performance of the platform.
+GET
+/api/v1/admin/revenue
+Platform Revenue
+Query Params
+period (7d | 30d | 90d | all — default 30d)
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"data": {
+"period": "30d",
+"total_revenue_ghs": "12480.00",
+"breakdown": {
+"tip_fees_ghs": "9840.00",
+"subscription_fees_ghs": "2640.00",
+"vip_room_fees_ghs": "0.00"
+},
+"transaction_counts": {
+"total_tips": 2180,
+"total_subscriptions": 132,
+"total_withdrawals": 94,
+"failed_payments": 23
+},
+"top_earning_creators": [
+{
+"username": "kwame_creates",
+"display_name": "Kwame Asante",
+"total_earned_ghs": "820.00"
+}
+],
+"daily_revenue": [
+{
+"date": "2025-03-01",
+"revenue_ghs": "520.00"
+},
+{
+"date": "2025-02-28",
+"revenue_ghs": "490.00"
+}
+]
+}
+}
+8. Error Code Reference
+All error responses follow the standard envelope. The code field is used for frontend error handling logic and should never be shown raw to users.
+Error Code
+HTTP
+Description
+TIP_NOT_FOUND
+404
+Tip with the given ID does not exist
+CANNOT_TIP_OWN_VIDEO
+403
+A creator cannot tip their own video
+CANNOT_SUBSCRIBE_TO_SELF
+403
+A creator cannot subscribe to their own channel
+PHONE_NOT_VERIFIED
+403
+Phone number not verified — wallet features locked
+NO_MOMO_ACCOUNT
+400
+No MoMo account registered — add one before withdrawing
+INSUFFICIENT_BALANCE
+400
+Available balance is less than the requested withdrawal amount
+BELOW_MINIMUM_WITHDRAWAL
+400
+Withdrawal amount is below the GHS 10.00 minimum
+ABOVE_DAILY_LIMIT
+400
+Withdrawal exceeds the GHS 2,000.00 daily Hubtel limit
+MOMO_PAYMENT_FAILED
+400
+MTN MoMo payment was rejected, cancelled, or timed out
+MOMO_NUMBER_INVALID
+400
+Phone number is not a valid MTN Ghana MoMo number
+MOMO_PROVIDER_UNSUPPORTED
+400
+Only MTN MoMo is supported in Phase 1
+ALREADY_SUBSCRIBED
+409
+Viewer already has an active subscription to this creator — returns existing subscription details
+CREATOR_NOT_SUBSCRIBED
+403
+Viewer does not have an active subscription to access this creator's premium content
+SUBSCRIPTION_NOT_FOUND
+404
+Subscription record with the given ID does not exist
+PLAYBACK_TOKEN_EXPIRED
+401
+Cloudflare signed playback token has expired — request a fresh one
+WITHDRAWAL_NOT_FOUND
+404
+Withdrawal record not found
+DUPLICATE_PAYMENT
+409
+Idempotency key already used — returns existing tip record
+WEBHOOK_SIGNATURE_INVALID
+403
+Hubtel webhook signature verification failed — request rejected
+WITHDRAWAL_FLAGGED
+403
+Withdrawal flagged for manual review — pending admin approval
+WALLET_NOT_FOUND
+404
+Wallet record not found for this user
+INTERNAL_SERVER_ERROR
+500
+Unexpected error — logged to Sentry automatically

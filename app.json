@@ -1,24 +1,16 @@
 {
   "expo": {
-    "name": "TheFourthBook",
-    "slug": "THEFOURTHBOOK",
+    "name": "tamkko",
+    "slug": "tamkko",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "thefourthbook",
+    "scheme": "tamkko",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "bundleIdentifier": "com.thefourthbook.app",
-      "supportsTablet": true,
-      "infoPlist": {
-        "CFBundleLocalizations": [
-          "en",
-          "fr",
-          "en",
-          "fr"
-        ]
-      }
+      "bundleIdentifier": "com.tamkko.app",
+      "supportsTablet": true
     },
     "android": {
       "adaptiveIcon": {
@@ -29,53 +21,6 @@
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "package": "com.thefourthbook.app",
-      "intentFilters": [
-        {
-          "action": "VIEW",
-          "category": [
-            "BROWSABLE",
-            "DEFAULT"
-          ],
-          "data": [
-            {
-              "scheme": "thefourthbook",
-              "host": "payments",
-              "pathPrefix": "/callback"
-            },
-            {
-              "scheme": "thefourthbook",
-              "pathPrefix": "/oauthredirect"
-            },
-            {
-              "scheme": "com.thefourthbook.app",
-              "host": "oauthredirect"
-            }
-          ]
-        },
-        {
-          "action": "VIEW",
-          "category": [
-            "BROWSABLE",
-            "DEFAULT"
-          ],
-          "data": [
-            {
-              "scheme": "thefourthbook",
-              "host": "payments",
-              "pathPrefix": "/callback"
-            },
-            {
-              "scheme": "thefourthbook",
-              "pathPrefix": "/oauthredirect"
-            },
-            {
-              "scheme": "com.thefourthbook.app",
-              "host": "oauthredirect"
-            }
-          ]
-        }
-      ],
       "permissions": [
         "android.permission.RECORD_AUDIO",
         "android.permission.RECORD_AUDIO"
@@ -102,25 +47,10 @@
       ],
       "@react-native-community/datetimepicker",
       [
-        "expo-localization",
-        {
-          "supportedLocales": {
-            "ios": [
-              "en",
-              "fr"
-            ],
-            "android": [
-              "en",
-              "fr"
-            ]
-          }
-        }
-      ],
-      [
         "expo-image-picker",
         {
-          "photosPermission": "Allow THEFOURTHBOOK to access your photos so you can upload your ID front image.",
-          "cameraPermission": "Allow THEFOURTHBOOK to use the camera to capture your ID and selfie."
+          "photosPermission": "Allow TAMKKO to access your photos so you can upload your ID front image.",
+          "cameraPermission": "Allow TAMKKO to use the camera to capture your ID and selfie."
         }
       ],
       "expo-secure-store"
@@ -130,21 +60,9 @@
       "reactCompiler": true
     },
     "extra": {
-      "router": {},
-      "googleOAuth": {
-        "androidClientId": "1070119455094-orfjc6te7pg0cclut4ergjo7l0l0l7gk.apps.googleusercontent.com",
-        "iosClientId": "1070119455094-mfg5ufhtjl6ujic3npbaj4jehtb2b79o.apps.googleusercontent.com",
-        "webClientId": "1070119455094-vd37ovm54k26f3oinrffmkujets6sovl.apps.googleusercontent.com"
-      },
-      "eas": {
-        "projectId": "bd4d0b9b-24bb-4cda-8981-59b7a7d37417"
-      }
     },
     "runtimeVersion": {
       "policy": "appVersion"
-    },
-    "updates": {
-      "url": "https://u.expo.dev/bd4d0b9b-24bb-4cda-8981-59b7a7d37417"
     }
   }
 }

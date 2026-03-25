@@ -1,4 +1,4 @@
-// UI Components
+﻿// UI Components
 export { default as AppBottomSheet } from './ui/AppBottomSheet';
 export { default as AppButton } from './ui/AppButton';
 export { default as AppModal } from './ui/AppModal';
@@ -12,9 +12,11 @@ export { default as Screen } from './ui/Screen';
 // Layout Components
 export { default as CustomTabBar } from './layout/CustomTabBar';
 
+// Feature Scaffolding
+export * from './scaffold';
+
 // Home/Dashboard Components
 export * from './home';
 
 // Re-export types
 export type { AppBottomSheetRef } from './ui/AppBottomSheet';
-

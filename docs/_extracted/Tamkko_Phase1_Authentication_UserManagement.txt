@@ -1,0 +1,1565 @@
+TAMKKO
+API & User Story Documentation
+Phase 1 — MVP
+Module
+Authentication & User Management
+Version
+1.0.0
+Base URL
+https://api.tamkko.app/api/v1
+Auth Scheme
+JWT Bearer Token + OTP
+Frontend
+React Native (Expo SDK 51+)
+Backend
+Django 5.x + DRF
+Platforms
+iOS (Expo Go / EAS Build) + Android + Web Admin
+Table of Contents
+1.  Technology Stack & Dependencies
+1.1  Backend — Django / Python
+1.2  Frontend — React Native (Expo)
+2.  Registration
+2.1  Register (Phone + Email, any country)
+2.2  Verify Email After Registration
+2.3  Verify Phone Number via OTP
+3.  Login
+3.1  Login with Phone + Password
+3.2  Login with Email or Username + Password
+3.3  Google OAuth 2.0 Login
+3.4  Logout
+3.5  Refresh Access Token
+4.  OTP Management
+4.1  Send / Resend OTP
+4.2  Verify OTP
+5.  Two-Factor Authentication (2FA)
+5.1  Complete 2FA Flow — Concept & User Journey
+5.2  Enable 2FA — Generate Secret & QR Code
+5.3  Confirm 2FA Setup
+5.4  Verify 2FA on Login
+5.5  Disable 2FA
+5.6  Regenerate Backup Codes
+6.  Password Management
+6.1  Request Password Reset
+6.2  Verify Reset OTP
+6.3  Set New Password
+6.4  Change Password (Authenticated)
+7.  User Profile Management
+7.1  Get My Profile
+7.2  Update Profile
+7.3  Upload Profile Picture
+7.4  Get Public Creator Profile
+7.5  Follow / Unfollow Creator
+7.6  Get Followers List
+7.7  Get Following List
+8.  Account Management
+8.1  Deactivate / Delete Account
+8.2  Reactivate Account
+8.3  Check Username Availability
+8.4  Get Account Security Overview
+9.  Session Management
+9.1  List Active Sessions
+9.2  Revoke a Specific Session
+9.3  Revoke All Other Sessions
+10.  Admin — User Management
+10.1  List All Users
+10.2  Get User Detail
+10.3  Suspend / Unsuspend User
+10.4  Grant / Revoke Creator Verified Badge
+10.5  Permanently Delete User
+11.  Error Code Reference
+1. Technology Stack & Dependencies
+Every package listed below is required to implement the Authentication & User Management module. Both the backend and frontend team must align on these before development begins.
+1.1  Backend — Django / Python
+Category
+Package / Service
+Purpose
+Core Framework
+Django 5.x
+Main web framework
+REST API
+djangorestframework
+REST endpoint scaffolding
+JWT Auth
+djangorestframework-simplejwt
+Access + refresh JWT tokens with blacklisting
+OAuth 2.0
+social-auth-app-django
+Google OAuth login integration
+OTP / SMS
+Africa's Talking SMS API
+OTP delivery via SMS to Ghana (+233) and international numbers
+OTP / TOTP
+pyotp
+Time-based OTP for 2FA (Google Authenticator / Authy)
+QR Code
+qrcode[pil]
+Generates 2FA setup QR code PNG served via API
+Phone Validation
+phonenumbers
+Validates +233 Ghana numbers and all international formats
+Email
+django-anymail + SendGrid
+Transactional emails: verification, password reset, alerts
+Media / Uploads
+Cloudflare R2 + django-storages
+Profile picture storage (S3-compatible, no egress fees)
+Cache / Sessions
+Redis 7 + django-redis
+OTP caching, token blacklist, session storage
+Rate Limiting
+django-ratelimit
+Throttle OTP, login, and reset endpoints
+CORS
+django-cors-headers
+Allow Expo mobile and web admin clients
+Env Config
+python-decouple
+Manage secrets and environment variables via .env
+Task Queue
+celery + redis
+Async OTP delivery, email dispatch jobs
+Error Tracking
+sentry-sdk
+Real-time error monitoring in production
+Password Hashing
+argon2-cffi (via Django)
+Secure password hashing (Argon2 algorithm)
+1.2  Frontend — React Native (Expo)
+Category
+Package / Service
+Purpose
+HTTP Client
+axios
+API requests; interceptors for token refresh
+Auth State
+zustand
+Persist tokens and user state across screens
+Token Storage
+expo-secure-store
+Encrypted device storage for access/refresh tokens (never AsyncStorage)
+Google OAuth
+expo-auth-session + expo-web-browser
+Google OAuth flow — opens system browser, handles callback
+OTP Input UI
+react-native-otp-textinput
+Styled 6-digit OTP input with auto-advance
+Phone Input
+react-native-phone-number-input
+Country-code aware phone number input (+233 default)
+2FA QR Scanner
+expo-camera (BarCodeScanner)
+Scan the 2FA QR code displayed on screen (no second phone needed — see Section 5.1)
+Form Validation
+react-hook-form + zod
+Schema-based form validation with typed errors
+Push Tokens
+expo-notifications
+Register device token for push notification delivery
+Image Picker
+expo-image-picker
+Select or capture profile picture from device
+Deep Links
+expo-linking
+Handle OAuth callback deep links (tamkko://auth/callback)
+Navigation
+expo-router (file-based routing)
+Screen navigation; auth guard for protected routes
+Country Picker
+react-native-country-picker-modal
+Country selector on registration for region detection
+2. Registration
+ℹ️
+Registration on Tamkko is unified — all users (Ghana or international) register with the same form. There is no separate Ghana vs international flow. The user's country is captured during registration via a country selector, which informs the platform about their region for monetisation eligibility (e.g., Mobile Money is only available for Ghana accounts). Both phone and email are collected and must be verified.
+2.1  Register (Phone + Email, Any Country)
+👤
+User Story:  As a new user anywhere in the world, I want to create a Tamkko account by providing my email, phone number, display name, username, country, and a password. I understand that anyone can be a content creator — there is no separate creator account type. Once registered, I can immediately start uploading videos or just watch content.
+Field Explanations & Accepted Values:
+country: ISO 3166-1 alpha-2 country code (e.g. GH for Ghana, NG for Nigeria, US for United States, GB for United Kingdom). This is selected from a country picker in the UI, not typed manually. It determines the user's region for features like Mobile Money payouts.
+All users have the same account type. Any user can upload videos and receive tips — just like TikTok where any account can post content. There is no 'role' field. The platform automatically unlocks creator-specific features (wallet, tipping, withdrawals) once the user's phone is verified and they upload their first video.
+POST
+/api/v1/auth/register
+Register User
+Auth Required
+No — public endpoint
+Rate Limit
+5 requests / 10 min per IP address
+Content-Type
+application/json
+📤  Request Body
+{
+"email": "kwame.asante@example.com",
+"phone": "+233241234567",
+"username": "kwame_creates",
+"display_name": "Kwame Asante",
+"password": "SecurePass123!",
+"confirm_password": "SecurePass123!",
+"country": "GH",
+"agree_terms": true
+}
+201
+Created — Account registered, verification messages sent
+✅  Response Body
+{
+"status": "success",
+"message": "Account created. Please verify your email and phone number.",
+"data": {
+"user": {
+"id": "usr_8k2m9x4p",
+"email": "kwame.asante@example.com",
+"phone": "+233241234567",
+"username": "kwame_creates",
+"display_name": "Kwame Asante",
+"country": "GH",
+"email_verified": false,
+"phone_verified": false,
+"created_at": "2025-03-01T09:00:00Z"
+},
+"verification": {
+"email_sent": true,
+"sms_otp_sent": true,
+"otp_expires_in": 300
+}
+}
+}
+400
+Bad Request — Validation errors
+❌  Error Response
+{
+"status": "error",
+"message": "Validation failed",
+"errors": {
+"email": [
+"Email address is already registered"
+],
+"phone": [
+"Phone number is already registered"
+],
+"username": [
+"Username is already taken. Try: kwame_creates2, kwame_gh"
+],
+"password": [
+"Password must be at least 8 characters with 1 uppercase, 1 number, and 1 symbol"
+],
+"country": [
+"Invalid country code"
+],
+"agree_terms": [
+"You must accept the Terms of Service to continue"
+]
+}
+}
+2.2  Verify Email After Registration
+👤
+User Story:  As a newly registered user, I want to enter the 6-digit OTP code sent to my email address so my email is confirmed and my account is fully active. I open my email app, find the OTP, switch back to Tamkko, and type the code in.
+How it works: After registration, a verification email is sent to the user containing a 6-digit OTP code (not a link). The user opens the email, reads the code, and types it into the verification screen inside the Tamkko app. The app sends the code to this endpoint and the backend marks the email as verified. This approach is simpler, works identically in development (Expo Go) and production (App Store / Play Store), and requires no deep link configuration whatsoever.
+POST
+/api/v1/auth/verify-email
+Verify Email
+Auth Required
+No
+OTP expires
+10 minutes from time of sending
+📤  Request Body
+{
+"email": "kwame.asante@example.com",
+"otp": "749201"
+}
+200
+OK — Email verified successfully
+✅  Response Body
+{
+"status": "success",
+"message": "Email address verified successfully. OTP accepted.",
+"data": {
+"email_verified": true
+}
+}
+400
+Bad Request — Token invalid or expired
+❌  Error Response
+{
+"status": "error",
+"message": "Email verification OTP is invalid or has expired.",
+"code": "EMAIL_OTP_INVALID"
+}
+POST
+/api/v1/auth/resend-verification-email
+Resend Verification Email
+📤  Request Body
+{
+"email": "kwame.asante@example.com"
+}
+200
+OK — New verification email sent
+✅  Response Body
+{
+"status": "success",
+"message": "New verification OTP sent to kwame.asante@example.com. Check your inbox.",
+"data": {
+"expires_in": 600
+}
+}
+2.3  Verify Phone Number via OTP
+👤
+User Story:  As a newly registered user, I want to enter the 6-digit OTP I received via SMS to verify my phone number so I can unlock wallet and monetisation features.
+⚠️
+Phone verification is required before a user can receive tips, access their wallet, or withdraw earnings. Unverified phone accounts can still watch content and follow creators.
+POST
+/api/v1/auth/verify-phone
+Verify Phone OTP
+📤  Request Body
+{
+"phone": "+233241234567",
+"otp": "482917"
+}
+200
+OK — Phone verified
+✅  Response Body
+{
+"status": "success",
+"message": "Phone number verified successfully. Wallet features are now unlocked.",
+"data": {
+"phone_verified": true,
+"wallet_unlocked": true
+}
+}
+3. Login
+3.1  Login with Phone + Password
+👤
+User Story:  As a registered user, I want to log in using my phone number and password to access my Tamkko account.
+POST
+/api/v1/auth/login/phone
+Login — Phone
+Auth Required
+No
+Rate Limit
+10 failed attempts locks account for 15 minutes
+Content-Type
+application/json
+📤  Request Body
+{
+"phone": "+233241234567",
+"password": "SecurePass123!"
+}
+200
+OK — Login successful
+✅  Response Body
+{
+"status": "success",
+"message": "Login successful",
+"data": {
+"user": {
+"id": "usr_8k2m9x4p",
+"phone": "+233241234567",
+"username": "kwame_creates",
+"display_name": "Kwame Asante",
+"country": "GH",
+"profile_picture": "https://cdn.tamkko.app/avatars/usr_8k2m9x4p.jpg",
+"phone_verified": true,
+"email_verified": true,
+"is_2fa_enabled": false,
+"last_login": "2025-03-01T10:00:00Z"
+},
+"tokens": {
+"access": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+"refresh": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+"expires_in": 3600
+}
+}
+}
+200
+OK — 2FA Required (user has 2FA enabled, full login not granted yet)
+⚠️  2FA Pending Response
+{
+"status": "success",
+"message": "Password verified. 2FA verification required to complete login.",
+"data": {
+"requires_2fa": true,
+"two_fa_token": "2fa_tmp_a1b2c3d4e5",
+"expires_in": 300
+}
+}
+401
+Unauthorized — Wrong credentials
+❌  Error Response
+{
+"status": "error",
+"message": "Invalid phone number or password.",
+"code": "INVALID_CREDENTIALS",
+"data": {
+"attempts_remaining": 7
+}
+}
+403
+Forbidden — Account suspended
+❌  Error Response
+{
+"status": "error",
+"message": "Your account has been suspended. Please contact support@tamkko.app.",
+"code": "ACCOUNT_SUSPENDED",
+"data": {
+"reason": "Repeated violation of community guidelines",
+"suspended_at": "2025-02-20T12:00:00Z",
+"support_email": "support@tamkko.app"
+}
+}
+3.2  Login with Email or Username + Password
+👤
+User Story:  As a registered user, I want to log in using either my email address or my username combined with my password. The login field accepts both formats — I do not need to specify which one I am using.
+How it works: The backend receives the identifier field and checks it against both the email and username columns in the database. Whichever matches is used for authentication. This means the user never has to remember whether they signed up with an email or username — either works.
+POST
+/api/v1/auth/login/email
+Login — Email or Username
+Auth Required
+No
+identifier field
+Accepts email OR username — the backend resolves which one was provided
+Rate Limit
+10 failed attempts locks account for 15 minutes
+📤  Request Body — Login with email
+{
+"identifier": "kwame.asante@example.com",
+"password": "SecurePass123!"
+}
+📤  Request Body — Login with username
+{
+"identifier": "kwame_creates",
+"password": "SecurePass123!"
+}
+200
+OK — Login successful
+✅  Response Body
+{
+"status": "success",
+"message": "Login successful",
+"data": {
+"user": {
+"id": "usr_8k2m9x4p",
+"email": "kwame.asante@example.com",
+"username": "kwame_creates",
+"display_name": "Kwame Asante",
+"country": "GH",
+"is_2fa_enabled": false
+},
+"tokens": {
+"access": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+"refresh": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+"expires_in": 3600
+}
+}
+}
+3.3  Google OAuth 2.0 Login
+👤
+User Story:  As a user, I want to sign in with my Google account so I can skip manual password entry. If I am a new user, I will be asked to complete my profile (username and country) before my account is created.
+How the Google OAuth flow works in Expo:
+The app calls expo-auth-session with the Google OAuth provider. This opens the system browser (expo-web-browser) on the device.
+The user logs in to Google and approves the Tamkko permissions request.
+Google redirects back to the app via the deep link tamkko://auth/callback with an authorisation code.
+expo-linking captures the deep link and passes the id_token and access_token to the frontend.
+The frontend sends these tokens to the backend endpoint below.
+The backend verifies the Google ID token, finds or creates the user, and returns a Tamkko JWT.
+POST
+/api/v1/auth/oauth/google
+Google OAuth
+📤  Request Body
+{
+"id_token": "eyJhbGciOiJSUzI1NiIsImtpZCI6IjFlO...",
+"access_token": "ya29.a0AfH6SMBx..."
+}
+200
+OK — Existing user logged in via Google
+✅  Response Body
+{
+"status": "success",
+"message": "Login successful via Google",
+"data": {
+"is_new_user": false,
+"user": {
+"id": "usr_g9h3k7p1",
+"email": "john@gmail.com",
+"username": "johndoe_intl",
+"display_name": "John Doe",
+"auth_provider": "google"
+},
+"tokens": {
+"access": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+"refresh": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+"expires_in": 3600
+}
+}
+}
+201
+Created — New Google user, must complete profile before tokens issued
+✅  Response Body (new user)
+{
+"status": "success",
+"message": "Google account recognised. Please complete your profile to continue.",
+"data": {
+"is_new_user": true,
+"setup_token": "setup_tmp_x9y8z7w6",
+"expires_in": 600,
+"pre_filled": {
+"email": "john@gmail.com",
+"display_name": "John Doe",
+"profile_picture": "https://lh3.googleusercontent.com/..."
+},
+"required_fields": [
+"username",
+"phone",
+"country",
+"agree_terms"
+]
+}
+}
+POST
+/api/v1/auth/oauth/google/complete
+Complete Google Profile
+📤  Request Body
+{
+"setup_token": "setup_tmp_x9y8z7w6",
+"username": "johndoe_gh",
+"phone": "+233241234567",
+"country": "GH",
+"agree_terms": true
+}
+200
+OK — Account created, tokens issued
+✅  Response Body
+{
+"status": "success",
+"message": "Profile completed. Welcome to Tamkko!",
+"data": {
+"user": {
+"id": "usr_g9h3k7p1",
+"email": "john@gmail.com",
+"username": "johndoe_gh"
+},
+"tokens": {
+"access": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+"refresh": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+"expires_in": 3600
+}
+}
+}
+3.4  Logout
+👤
+User Story:  As a logged-in user, I want to log out so that my tokens are invalidated and no one else can use my session.
+POST
+/api/v1/auth/logout
+Logout
+Auth Required
+Yes — Authorization: Bearer {access_token}
+📤  Request Body
+{
+"refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+}
+200
+OK — Logged out, tokens blacklisted
+✅  Response Body
+{
+"status": "success",
+"message": "Logged out successfully. All tokens have been invalidated."
+}
+3.5  Refresh Access Token
+👤
+User Story:  As a user whose access token has expired, I want the app to silently obtain a new one using the refresh token so I am not forced to log in again.
+The Expo frontend should use an Axios request interceptor that automatically calls this endpoint when it receives a 401 response, then retries the original request with the new access token.
+POST
+/api/v1/auth/token/refresh
+Refresh Token
+📤  Request Body
+{
+"refresh": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+}
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"data": {
+"access": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+"refresh": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+"expires_in": 3600
+}
+}
+401
+Unauthorized — Refresh token expired or blacklisted
+❌  Error Response
+{
+"status": "error",
+"message": "Refresh token is invalid or has expired. Please log in again.",
+"code": "TOKEN_EXPIRED"
+}
+4. OTP Management
+OTPs are 6-digit codes delivered via SMS (Africa's Talking) or email (SendGrid). They expire after 5 minutes. Each OTP is single-use and invalidated after a successful verification or after 3 failed attempts.
+4.1  Send / Resend OTP
+👤
+User Story:  As a user, I want to request or re-request a one-time PIN to be sent to my phone so I can verify my identity for the following actions:
+All purposes / sensitive actions for which an OTP can be requested:
+registration — Verifying your phone number when creating a new account
+login — Passwordless OTP login (alternative to password login)
+password_reset — Confirming identity before resetting a forgotten password
+email_change — Verifying the new email address when the user updates their email
+phone_change — Verifying the new phone number when the user updates their phone
+withdrawal — Authorising a wallet withdrawal of earnings to Mobile Money
+disable_2fa — Confirming identity before turning off Two-Factor Authentication
+account_delete — Confirming identity before permanently deleting the account
+vip_room_access — One-time access grant confirmation for a VIP community room
+sensitive_profile_update — Updating password or linked payment details
+POST
+/api/v1/auth/otp/send
+Send OTP
+Auth Required
+No (for registration/password_reset). Yes for authenticated purposes (withdrawal, account_delete, etc.)
+Rate Limit
+3 OTP requests per phone number per 10 minutes
+Delivery
+SMS via Africa's Talking for phone. Email via SendGrid for email-based OTPs
+📤  Request Body
+{
+"phone": "+233241234567",
+"purpose": "registration"
+}
+200
+OK — OTP sent
+✅  Response Body
+{
+"status": "success",
+"message": "OTP sent to +233241234567",
+"data": {
+"expires_in": 300,
+"resend_allowed_after": 60
+}
+}
+429
+Too Many Requests — OTP rate limit hit
+❌  Error Response
+{
+"status": "error",
+"message": "Too many OTP requests. Please wait before requesting again.",
+"code": "OTP_RATE_LIMITED",
+"data": {
+"retry_after_seconds": 120
+}
+}
+4.2  Verify OTP
+👤
+User Story:  As a user who received an OTP, I want to enter the 6-digit code to confirm my identity and proceed with the action I requested.
+POST
+/api/v1/auth/otp/verify
+Verify OTP
+📤  Request Body
+{
+"phone": "+233241234567",
+"otp": "482917",
+"purpose": "registration"
+}
+200
+OK — OTP verified
+✅  Response Body
+{
+"status": "success",
+"message": "OTP verified successfully.",
+"data": {
+"verified": true,
+"action_token": "act_b7c8d9e0f1a2",
+"action_token_expires_in": 300
+}
+}
+The action_token is a short-lived token used to authorise the specific sensitive action. For example, after verifying a withdrawal OTP, the action_token must be included in the withdrawal request payload to prove the user confirmed via OTP.
+400
+Bad Request — Wrong or expired OTP
+❌  Error Response
+{
+"status": "error",
+"message": "Invalid or expired OTP. You have 2 attempts remaining before lockout.",
+"code": "OTP_INVALID",
+"data": {
+"attempts_remaining": 2
+}
+}
+5. Two-Factor Authentication (2FA)
+5.1  Complete 2FA Flow — Concept & Full User Journey
+What is TOTP-based 2FA?
+Tamkko uses TOTP (Time-Based One-Time Password) — the same standard used by Google, GitHub, and major banks. TOTP works by sharing a secret key between the server and an authenticator app. Every 30 seconds, both the server and the app independently generate the same 6-digit code from that secret. When the user types their code, the server checks it matches — no network call required by the authenticator app.
+Do I need a second phone?
+No. You do not need a second phone. The QR code is displayed on the Tamkko app on the user's phone, and the user scans it using an authenticator app (Google Authenticator or Authy) installed on the same phone or any other device. On mobile, the flow works as follows: the QR code is shown on screen, the user presses 'Open in Google Authenticator' (a deep link), which switches to the authenticator app pre-filled with the secret. Alternatively, the user can copy the text secret code manually and paste it into any authenticator app.
+Complete Step-by-Step User Journey:
+User navigates to Account Settings > Security > Enable Two-Factor Authentication.
+The Tamkko frontend calls POST /api/v1/auth/2fa/enable (Section 5.2). The server generates a unique TOTP secret for this user and returns both the secret string and a QR code image URL.
+The app displays the QR code image on screen with two options: (a) 'Open in Authenticator App' — a button that opens a deep link (otpauth://totp/...) which launches Google Authenticator or Authy pre-filled with the secret; (b) 'Copy setup key' — copies the plain-text secret so the user can manually add it in any authenticator app.
+The user opens their authenticator app (on the same phone or another device) and adds the account. The authenticator app is now generating a new 6-digit code every 30 seconds.
+The user returns to the Tamkko app and enters the current 6-digit code from their authenticator app into the confirmation screen.
+The frontend sends this code to POST /api/v1/auth/2fa/verify-setup (Section 5.3). The server verifies the code, confirms the TOTP secret is correctly configured, enables 2FA on the account, and returns one-time backup codes.
+The backup codes are displayed to the user ONE TIME ONLY. The user must save these somewhere safe (screenshot, password manager). They can be used if the user ever loses access to their authenticator app.
+2FA is now active. From this point, every login requires the user to enter their password AND a 6-digit TOTP code from their authenticator app.
+What happens if the user loses their phone / authenticator app?
+The user can use one of their backup codes on the 2FA verification screen. Each backup code is single-use. After using a backup code the user is prompted to regenerate new ones. If all backup codes are also lost, the user must contact Tamkko support with identity verification to regain access.
+Server-side validation window:
+The server accepts codes from the current 30-second window and the one immediately before it (to account for clock skew between the user's device and the server). Codes from more than 60 seconds ago are rejected.
+5.2  Enable 2FA — Generate Secret & QR Code
+👤
+User Story:  As a logged-in user, I want to initiate the 2FA setup process so the server generates a TOTP secret and I can scan the QR code with my authenticator app.
+POST
+/api/v1/auth/2fa/enable
+Enable 2FA — Init
+Auth Required
+Yes — Authorization: Bearer {access_token}
+No request body
+required — just send the authorisation header
+200
+OK — Secret and QR code generated, 2FA NOT yet active
+✅  Response Body
+{
+"status": "success",
+"message": "Scan the QR code with Google Authenticator or Authy, then confirm with a 6-digit code.",
+"data": {
+"secret": "JBSWY3DPEHPK3PXP",
+"qr_code_url": "https://api.tamkko.app/api/v1/auth/2fa/qr/usr_8k2m9x4p.png",
+"otpauth_uri": "otpauth://totp/Tamkko:kwame_creates?secret=JBSWY3DPEHPK3PXP&issuer=Tamkko",
+"note": "2FA is NOT active yet. You must confirm with a valid code to complete setup."
+}
+}
+⚠️
+The qr_code_url serves a PNG image of the QR code. The frontend displays this image. The otpauth_uri is the deep link that can be used to open Google Authenticator or Authy directly. The secret is shown as a fallback for manual entry. 2FA is NOT enabled until the user completes Section 5.3.
+5.3  Confirm 2FA Setup
+👤
+User Story:  As a user who has scanned the QR code, I want to enter the 6-digit code currently shown in my authenticator app to prove it is working correctly before 2FA is activated on my account.
+POST
+/api/v1/auth/2fa/verify-setup
+Confirm 2FA Setup
+Auth Required
+Yes — Authorization: Bearer {access_token}
+📤  Request Body
+{
+"totp_code": "482917"
+}
+200
+OK — 2FA is now active
+✅  Response Body
+{
+"status": "success",
+"message": "Two-factor authentication is now active on your account.",
+"data": {
+"is_2fa_enabled": true,
+"backup_codes": [
+"ABCD-1234",
+"EFGH-5678",
+"IJKL-9012",
+"MNOP-3456",
+"QRST-7890",
+"UVWX-2345"
+],
+"backup_codes_note": "Save these codes in a safe place. Each code can only be used once. They will NOT be shown again."
+}
+}
+400
+Bad Request — TOTP code incorrect
+❌  Error Response
+{
+"status": "error",
+"message": "The code you entered is incorrect. Please check your authenticator app and try again.",
+"code": "TOTP_INVALID"
+}
+5.4  Verify 2FA on Login
+👤
+User Story:  As a user with 2FA enabled, after successfully entering my password I want to be prompted to enter the 6-digit code from my authenticator app to complete my login. If I do not have my authenticator app, I can use a backup code instead.
+POST
+/api/v1/auth/2fa/login-verify
+2FA Login Verify
+The two_fa_token comes from the login response when requires_2fa is true (Section 3.1 / 3.2). It is a short-lived token that proves the user passed the password check. Both totp_code and backup_code are accepted — send whichever the user provides.
+📤  Request Body — using authenticator app code
+{
+"two_fa_token": "2fa_tmp_a1b2c3d4e5",
+"totp_code": "391847"
+}
+📤  Request Body — using a backup code (if authenticator app unavailable)
+{
+"two_fa_token": "2fa_tmp_a1b2c3d4e5",
+"backup_code": "ABCD-1234"
+}
+200
+OK — Full session granted
+✅  Response Body
+{
+"status": "success",
+"message": "2FA verified. Login complete.",
+"data": {
+"user": {
+"id": "usr_8k2m9x4p",
+"username": "kwame_creates",
+"display_name": "Kwame Asante"
+},
+"tokens": {
+"access": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+"refresh": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+"expires_in": 3600
+},
+"used_backup_code": false
+}
+}
+400
+Bad Request — Invalid code or expired 2FA token
+❌  Error Response
+{
+"status": "error",
+"message": "Invalid or expired 2FA code.",
+"code": "TOTP_INVALID",
+"data": {
+"attempts_remaining": 4
+}
+}
+5.5  Disable 2FA
+👤
+User Story:  As a logged-in user, I want to disable 2FA from my security settings. I must confirm with my current password and a valid TOTP code to prevent unauthorized disabling of this security feature.
+POST
+/api/v1/auth/2fa/disable
+Disable 2FA
+Auth Required
+Yes — Authorization: Bearer {access_token}
+📤  Request Body
+{
+"password": "SecurePass123!",
+"totp_code": "748291"
+}
+200
+OK — 2FA disabled
+✅  Response Body
+{
+"status": "success",
+"message": "Two-factor authentication has been disabled.",
+"data": {
+"is_2fa_enabled": false
+}
+}
+5.6  Regenerate Backup Codes
+👤
+User Story:  As a user who has used or lost my backup codes, I want to generate a fresh set so I can always recover access if I lose my authenticator app.
+POST
+/api/v1/auth/2fa/backup-codes/regenerate
+Regen Backup Codes
+📤  Request Body (Authorization: Bearer {access_token})
+{
+"password": "SecurePass123!"
+}
+200
+OK — New codes generated, old codes immediately invalidated
+✅  Response Body
+{
+"status": "success",
+"message": "New backup codes generated. Your previous codes are now invalid.",
+"data": {
+"backup_codes": [
+"NEWW-1111",
+"NEWW-2222",
+"NEWW-3333",
+"NEWW-4444",
+"NEWW-5555",
+"NEWW-6666"
+]
+}
+}
+6. Password Management
+6.1  Request Password Reset
+👤
+User Story:  As a user who has forgotten their password, I want to request a reset OTP sent to my phone or email so I can regain access to my account.
+POST
+/api/v1/auth/password/reset-request
+Request Password Reset
+Rate Limit
+3 requests per identifier per 15 minutes
+method
+sms — sends a 6-digit OTP to phone. email — sends a reset link/OTP to email address
+📤  Request Body — phone
+{
+"identifier": "+233241234567",
+"method": "sms"
+}
+📤  Request Body — email
+{
+"identifier": "kwame.asante@example.com",
+"method": "email"
+}
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"message": "Password reset OTP sent.",
+"data": {
+"reset_token": "rst_7g4h2j9k",
+"expires_in": 600
+}
+}
+6.2  Verify Reset OTP
+👤
+User Story:  As a user who received a reset OTP, I want to enter it to confirm my identity before I am allowed to set a new password.
+POST
+/api/v1/auth/password/reset-verify
+Verify Reset OTP
+📤  Request Body
+{
+"reset_token": "rst_7g4h2j9k",
+"otp": "839201"
+}
+200
+OK — OTP verified, password change token issued
+✅  Response Body
+{
+"status": "success",
+"message": "Identity verified. You may now set a new password.",
+"data": {
+"password_change_token": "pwchg_x3y4z5a6b7",
+"expires_in": 300
+}
+}
+6.3  Set New Password
+👤
+User Story:  As a user who has verified their identity, I want to set a brand new password for my account.
+POST
+/api/v1/auth/password/reset
+Reset Password
+📤  Request Body
+{
+"password_change_token": "pwchg_x3y4z5a6b7",
+"new_password": "NewSecurePass456!",
+"confirm_password": "NewSecurePass456!"
+}
+200
+OK — Password reset, all existing sessions revoked
+✅  Response Body
+{
+"status": "success",
+"message": "Password reset successfully. All active sessions have been logged out.",
+"data": {
+"sessions_revoked": 3
+}
+}
+6.4  Change Password (Authenticated)
+👤
+User Story:  As a logged-in user, I want to change my password from within account settings by entering my current password and choosing a new one.
+PUT
+/api/v1/auth/password/change
+Change Password
+Auth Required
+Yes — Authorization: Bearer {access_token}
+📤  Request Body
+{
+"current_password": "SecurePass123!",
+"new_password": "NewSecurePass456!",
+"confirm_password": "NewSecurePass456!"
+}
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"message": "Password updated. Please log in again with your new password.",
+"data": {
+"logout_required": true
+}
+}
+7. User Profile Management
+7.1  Get My Profile
+👤
+User Story:  As a logged-in user, I want to retrieve my full profile data including my stats, wallet balance summary, and account settings.
+GET
+/api/v1/users/me
+Get My Profile
+Auth Required
+Yes — Authorization: Bearer {access_token}
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"data": {
+"user": {
+"id": "usr_8k2m9x4p",
+"email": "kwame.asante@example.com",
+"phone": "+233241234567",
+"username": "kwame_creates",
+"display_name": "Kwame Asante",
+"bio": "Afrobeats content creator. Accra, Ghana.",
+"profile_picture": "https://cdn.tamkko.app/avatars/usr_8k2m9x4p.jpg",
+"country": "GH",
+"website_url": "https://linktr.ee/kwamecreates",
+"phone_verified": true,
+"email_verified": true,
+"is_2fa_enabled": true,
+"referral_code": "KWAME2024",
+"referral_link": "https://tamkko.app/join/KWAME2024",
+"campus_code": null,
+"stats": {
+"followers": 4821,
+"following": 312,
+"total_videos": 87,
+"total_tips_received_ghs": 3450
+},
+"wallet": {
+"balance_ghs": 1230.5,
+"pending_ghs": 200
+},
+"created_at": "2025-01-15T08:00:00Z",
+"last_login": "2025-03-01T10:00:00Z"
+}
+}
+}
+7.2  Update Profile
+👤
+User Story:  As a logged-in user, I want to update my display name, bio, username, or website link. All fields are optional — only send the fields you want to change.
+PATCH
+/api/v1/users/me
+Update Profile
+Auth Required
+Yes — Authorization: Bearer {access_token}
+Note
+username changes are limited to once every 30 days
+📤  Request Body (all fields optional)
+{
+"display_name": "Kwame A.",
+"bio": "Afrobeats & lifestyle creator. Accra, Ghana.",
+"username": "kwame_official",
+"website_url": "https://linktr.ee/kwamecreates"
+}
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"message": "Profile updated successfully.",
+"data": {
+"user": {
+"id": "usr_8k2m9x4p",
+"username": "kwame_official",
+"display_name": "Kwame A.",
+"updated_at": "2025-03-01T11:30:00Z"
+}
+}
+}
+7.3  Upload Profile Picture
+👤
+User Story:  As a user, I want to upload a profile picture using expo-image-picker so my profile is personalised.
+How it works: The Expo app uses expo-image-picker to let the user select or capture an image. The selected image is uploaded as multipart/form-data. The backend resizes it to 400x400px and stores it in Cloudflare R2. The returned URL is the public CDN link.
+POST
+/api/v1/users/me/avatar
+Upload Avatar
+Auth Required
+Yes — Authorization: Bearer {access_token}
+Content-Type
+multipart/form-data
+Max size
+5 MB
+Accepted formats
+JPG, PNG, WEBP
+Storage
+Cloudflare R2 — auto-resized to 400x400px on upload
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"message": "Profile picture updated.",
+"data": {
+"profile_picture": "https://cdn.tamkko.app/avatars/usr_8k2m9x4p.jpg"
+}
+}
+7.4  Get Public Creator Profile
+👤
+User Story:  As any visitor (logged in or not), I want to view a creator's public profile page to see their bio, follower count, and content.
+GET
+/api/v1/users/{username}
+Public Profile
+Auth Required
+No — but if authenticated, is_following and vip_room_unlocked are populated
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"data": {
+"creator": {
+"id": "usr_8k2m9x4p",
+"username": "kwame_official",
+"display_name": "Kwame A.",
+"bio": "Afrobeats & lifestyle creator.",
+"profile_picture": "https://cdn.tamkko.app/avatars/usr_8k2m9x4p.jpg",
+"country": "GH",
+"is_verified": false,
+"stats": {
+"followers": 4821,
+"following": 312,
+"total_videos": 87
+},
+"is_following": true,
+"vip_room_unlocked": false,
+"vip_tip_threshold_ghs": 100
+}
+}
+}
+7.5  Follow / Unfollow Creator
+👤
+User Story:  As a logged-in user, I want to follow a creator to add them to my feed, or unfollow them to remove their content. The endpoint toggles the follow state.
+POST
+/api/v1/users/{username}/follow
+Follow / Unfollow (Toggle)
+Auth Required
+Yes — Authorization: Bearer {access_token}
+Behaviour
+If currently not following: follows. If currently following: unfollows.
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"message": "Followed kwame_official",
+"data": {
+"is_following": true,
+"creator_followers": 4822
+}
+}
+7.6  Get Followers List
+GET
+/api/v1/users/{username}/followers
+Followers List
+Query Params
+page (default 1), limit (default 20)
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"data": {
+"followers": [
+{
+"id": "usr_x1y2z3",
+"username": "fan_user_1",
+"display_name": "Fan User",
+"profile_picture": "https://cdn.tamkko.app/avatars/usr_x1y2z3.jpg",
+"followed_at": "2025-02-20T14:00:00Z"
+}
+],
+"pagination": {
+"current_page": 1,
+"total_pages": 5,
+"total_count": 4822
+}
+}
+}
+7.7  Get Following List
+GET
+/api/v1/users/{username}/following
+Following List
+Same response structure as the Followers List (Section 7.6). Returns the list of accounts this user follows.
+8. Account Management
+8.1  Deactivate / Delete Account
+👤
+User Story:  As a user, I want to deactivate my account (reversible within 30 days) or permanently delete it. I must confirm with my password and an OTP to prevent accidental deletions.
+action field values:
+deactivate — Soft delete. Account is hidden from the platform. All data is preserved for 30 days. The user can reactivate within that window.
+delete — Hard delete. Account and all associated data (videos, wallet, tips history) are scheduled for permanent removal after a 7-day grace period.
+DELETE
+/api/v1/users/me
+Delete / Deactivate Account
+Auth Required
+Yes — Authorization: Bearer {access_token}
+📤  Request Body
+{
+"password": "SecurePass123!",
+"otp": "482917",
+"action": "deactivate",
+"reason": "switching to another platform"
+}
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"message": "Account deactivated. You have 30 days to reactivate before data is permanently removed.",
+"data": {
+"account_status": "deactivated",
+"deletion_scheduled_at": "2025-04-01T09:00:00Z"
+}
+}
+8.2  Reactivate Account
+👤
+User Story:  As a user who deactivated their account, I want to reactivate it within the 30-day window by verifying my phone OTP.
+POST
+/api/v1/auth/reactivate
+Reactivate Account
+📤  Request Body
+{
+"phone": "+233241234567",
+"otp": "923847"
+}
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"message": "Welcome back! Your account has been reactivated.",
+"data": {
+"account_status": "active"
+}
+}
+8.3  Check Username Availability
+👤
+User Story:  As a user on the registration screen, I want to check if my chosen username is available before submitting the form so I get instant feedback.
+GET
+/api/v1/auth/check-username
+Username Availability
+Auth Required
+No — public endpoint
+Query Param
+username=kwame_creates
+Note
+Frontend should debounce this call at 400ms to avoid hammering the API on every keystroke
+200
+OK
+✅  Response Body — username taken
+{
+"status": "success",
+"data": {
+"username": "kwame_creates",
+"available": false,
+"suggestions": [
+"kwame_creates2",
+"kwame_creates_gh",
+"kwamecreates_official"
+]
+}
+}
+8.4  Get Account Security Overview
+👤
+User Story:  As a logged-in user, I want to see a summary of my security settings so I can quickly assess whether my account is adequately protected.
+GET
+/api/v1/users/me/security
+Security Overview
+Auth Required
+Yes — Authorization: Bearer {access_token}
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"data": {
+"security": {
+"phone_verified": true,
+"email_verified": true,
+"is_2fa_enabled": true,
+"auth_providers": [
+"phone",
+"google"
+],
+"active_sessions": 2,
+"last_password_change": "2025-02-10T08:00:00Z",
+"backup_codes_remaining": 4,
+"security_score": 95,
+"recommendations": [
+"All security features are active. Your account is well protected."
+]
+}
+}
+}
+9. Session Management
+9.1  List Active Sessions
+👤
+User Story:  As a logged-in user, I want to see all devices where I am currently logged in, including device name, location, and last activity, so I can identify any unauthorised sessions.
+GET
+/api/v1/users/me/sessions
+Active Sessions
+Auth Required
+Yes — Authorization: Bearer {access_token}
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"data": {
+"sessions": [
+{
+"session_id": "sess_a1b2c3d4",
+"device": "iPhone 15 Pro",
+"platform": "ios",
+"app_version": "1.0.0",
+"ip_address": "154.160.1.x",
+"location": "Accra, Ghana",
+"is_current": true,
+"created_at": "2025-03-01T09:00:00Z",
+"last_active": "2025-03-01T11:30:00Z"
+},
+{
+"session_id": "sess_e5f6g7h8",
+"device": "Chrome on Windows",
+"platform": "web",
+"app_version": null,
+"ip_address": "154.160.2.x",
+"location": "Accra, Ghana",
+"is_current": false,
+"created_at": "2025-02-28T14:00:00Z",
+"last_active": "2025-02-28T16:00:00Z"
+}
+],
+"total_sessions": 2
+}
+}
+9.2  Revoke a Specific Session
+👤
+User Story:  As a user, I want to remotely log out of a specific device by revoking that session token.
+DELETE
+/api/v1/users/me/sessions/{session_id}
+Revoke Session
+Auth Required
+Yes — Authorization: Bearer {access_token}
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"message": "Session sess_e5f6g7h8 has been revoked. That device is now logged out."
+}
+9.3  Revoke All Other Sessions
+👤
+User Story:  As a user who suspects their account may be compromised, I want to instantly log out all other devices while keeping only my current session active.
+DELETE
+/api/v1/users/me/sessions
+Revoke All Other Sessions
+Auth Required
+Yes — Authorization: Bearer {access_token}
+Behaviour
+Revokes all sessions EXCEPT the one used to make this request
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"message": "All other sessions have been revoked. Only your current session remains active.",
+"data": {
+"sessions_revoked": 3
+}
+}
+10. Admin — User Management
+ℹ️
+All admin endpoints are prefixed with /api/v1/admin/ and require an admin-role JWT token. Regular user tokens will receive a 403 PERMISSION_DENIED error. Admin accounts are created directly in the database by the system administrator — there is no public admin registration endpoint.
+10.1  List All Users
+GET
+/api/v1/admin/users
+List Users
+Auth Required
+Yes — Admin JWT
+Query Params
+page, limit, search (username/email/phone), country, status (active/suspended/banned), verified (true/false), created_after (ISO date)
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"data": {
+"users": [
+{
+"id": "usr_8k2m9x4p",
+"username": "kwame_creates",
+"display_name": "Kwame Asante",
+"phone": "+233241234567",
+"email": "kwame.asante@example.com",
+"country": "GH",
+"status": "active",
+"phone_verified": true,
+"email_verified": true,
+"is_2fa_enabled": true,
+"is_verified": false,
+"wallet_balance_ghs": 1230.5,
+"total_videos": 87,
+"followers": 4821,
+"joined_at": "2025-01-15T08:00:00Z"
+}
+],
+"pagination": {
+"current_page": 1,
+"total_pages": 40,
+"total_users": 800
+}
+}
+}
+10.2  Get User Detail (Admin)
+GET
+/api/v1/admin/users/{user_id}
+User Detail
+Returns the full user object including all profile fields, active sessions, wallet history summary, moderation history, and the account audit log (logins, password changes, 2FA events, suspensions).
+10.3  Suspend / Unsuspend User
+👤
+User Story:  As an admin, I want to suspend or ban a user account that violates community guidelines, and optionally send them a notification explaining the action.
+PATCH
+/api/v1/admin/users/{user_id}/status
+Update Account Status
+status values
+active — restore account. suspended — temporary suspension. banned — permanent ban
+📤  Request Body
+{
+"status": "suspended",
+"reason": "Repeated violation of community guidelines — posting explicit content",
+"notify_user": true,
+"suspend_duration_days": 30
+}
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"message": "User usr_8k2m9x4p suspended for 30 days.",
+"data": {
+"user_id": "usr_8k2m9x4p",
+"new_status": "suspended",
+"suspended_until": "2025-04-01T00:00:00Z",
+"notification_sent": true
+}
+}
+10.4  Grant / Revoke Creator Verified Badge
+👤
+User Story:  As an admin, I want to grant a verified badge to a creator who has submitted and passed identity verification, or revoke it if fraud is discovered.
+POST
+/api/v1/admin/users/{user_id}/verify
+Verify Badge
+📤  Request Body
+{
+"verified": true,
+"badge_type": "creator_verified",
+"notes": "Passed ID verification. National ID confirmed."
+}
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"message": "Verified badge granted.",
+"data": {
+"user_id": "usr_8k2m9x4p",
+"is_verified": true,
+"badge_type": "creator_verified",
+"verified_at": "2025-03-01T12:00:00Z"
+}
+}
+10.5  Permanently Delete User (Admin)
+👤
+User Story:  As an admin, I want to permanently and irreversibly delete a fraudulent user account and all associated data from the platform.
+DELETE
+/api/v1/admin/users/{user_id}
+Permanent Delete
+⚠️
+This action is IRREVERSIBLE. A confirmation string matching the format DELETE_USER_{user_id} must be sent in the request body as a double-confirmation safeguard. This prevents accidental deletions.
+📤  Request Body
+{
+"confirmation": "DELETE_USER_usr_8k2m9x4p",
+"reason": "Fraudulent account — multiple fake identities confirmed"
+}
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"message": "User permanently deleted from the platform.",
+"data": {
+"user_id": "usr_8k2m9x4p",
+"deleted_at": "2025-03-01T12:30:00Z",
+"data_purged": true
+}
+}
+11. Error Code Reference
+All error responses follow the standard envelope below. Use the code field in your frontend to map to user-facing messages — never display the raw message field from the server directly to users.
+Error Code
+HTTP
+Description
+INVALID_CREDENTIALS
+401
+Wrong phone, email, username, or password
+TOKEN_EXPIRED
+401
+Access or refresh token has expired
+TOKEN_INVALID
+401
+Token is malformed, tampered, or blacklisted
+ACCOUNT_SUSPENDED
+403
+Account suspended — user must contact support
+ACCOUNT_BANNED
+403
+Account permanently banned — no appeal path
+ACCOUNT_DEACTIVATED
+403
+Account is deactivated — prompt user to reactivate
+ACCOUNT_UNVERIFIED
+403
+Phone or email not yet verified — block monetisation
+PERMISSION_DENIED
+403
+User lacks the required role or permission
+OTP_INVALID
+400
+OTP is wrong or expired
+OTP_RATE_LIMITED
+429
+Too many OTP requests — enforce retry_after_seconds
+OTP_MAX_ATTEMPTS
+400
+3 failed OTP attempts — account locked for 15 minutes
+TOTP_INVALID
+400
+2FA TOTP code is incorrect
+TOTP_EXPIRED
+400
+The 2FA login token (two_fa_token) has expired
+BACKUP_CODE_INVALID
+400
+Backup code is wrong or already used
+VALIDATION_ERROR
+400
+Request body failed schema validation — check errors field
+USERNAME_TAKEN
+409
+Username already registered by another account
+PHONE_ALREADY_REGISTERED
+409
+Phone number is linked to an existing account
+EMAIL_ALREADY_REGISTERED
+409
+Email is linked to an existing account
+USER_NOT_FOUND
+404
+User with given ID or username not found
+SESSION_NOT_FOUND
+404
+Session ID does not exist or was already revoked
+EMAIL_OTP_INVALID
+400
+Email verification OTP is incorrect or has expired — prompt user to resend
+SETUP_TOKEN_EXPIRED
+400
+Google OAuth profile completion token has expired
+GOOGLE_AUTH_FAILED
+400
+Google ID token is invalid or could not be verified
+PASSWORD_CHANGE_TOKEN_INVALID
+400
+Password reset change token is invalid or expired
+RATE_LIMIT_EXCEEDED
+429
+General rate limit reached for this endpoint
+INTERNAL_SERVER_ERROR
+500
+Unexpected server error — logged to Sentry automatically
+Standard Error Response Envelope:
+Standard Error Response Format
+{
+"status": "error",
+"message": "Human-readable description of the error (do not display raw to users)",
+"code": "MACHINE_READABLE_ERROR_CODE",
+"errors": {
+"field_name": [
+"Specific validation error message for this field"
+]
+},
+"data": {
+"any_extra_context": "e.g. attempts_remaining, retry_after_seconds"
+}
+}

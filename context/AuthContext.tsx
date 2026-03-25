@@ -1,5 +1,8 @@
+﻿import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, ReactNode, useCallback, useContext, useEffect, useState } from 'react';
 
+import { USE_MOCK_DATA } from '@/config/settings';
+import { mockUsers } from '@/data/mock';
 import { authStorage } from '@/lib/auth';
 import { authEvents } from '@/lib/authEvents';
 import { authService } from '@/lib/services/authService';
@@ -24,18 +27,38 @@ interface AuthProviderProps {
     children: ReactNode;
 }
 
+const MOCK_SESSION_KEY = '@tamkko_mock_session_active';
+const MOCK_USER_EMAIL_KEY = '@tamkko_mock_user_email';
+
+const buildMockUser = (email?: string): CurrentUser => {
+    const base = mockUsers[0];
+    if (!email) return base;
+    return {
+        ...base,
+        email,
+        first_name: email.split('@')[0]?.slice(0, 1).toUpperCase() + email.split('@')[0]?.slice(1) || base.first_name,
+    };
+};
+
 export function AuthProvider({ children }: AuthProviderProps) {
     const [user, setUser] = useState<CurrentUser | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [hasSession, setHasSession] = useState(false);
 
     const refreshUser = useCallback(async () => {
+        if (USE_MOCK_DATA) {
+            const email = await AsyncStorage.getItem(MOCK_USER_EMAIL_KEY);
+            setUser(buildMockUser(email ?? undefined));
+            return;
+        }
+
         const currentUser = await authService.getCurrentUser();
         setUser(currentUser);
     }, []);
 
     const forceLocalLogout = useCallback(async () => {
         await authStorage.clearTokens();
+        await AsyncStorage.multiRemove([MOCK_SESSION_KEY, MOCK_USER_EMAIL_KEY]);
         setHasSession(false);
         setUser(null);
     }, []);
@@ -48,6 +71,21 @@ export function AuthProvider({ children }: AuthProviderProps) {
     };
 
     const checkAuth = useCallback(async () => {
+        if (USE_MOCK_DATA) {
+            try {
+                const [session, email] = await Promise.all([
+                    AsyncStorage.getItem(MOCK_SESSION_KEY),
+                    AsyncStorage.getItem(MOCK_USER_EMAIL_KEY),
+                ]);
+                const isActive = session === 'true';
+                setHasSession(isActive);
+                setUser(isActive ? buildMockUser(email ?? undefined) : null);
+            } finally {
+                setIsLoading(false);
+            }
+            return;
+        }
+
         try {
             const [accessToken, refreshToken] = await Promise.all([
                 authStorage.getAccessToken(),
@@ -92,6 +130,17 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }, []);
 
     const login = useCallback(async (credentials: LoginCredentials) => {
+        if (USE_MOCK_DATA) {
+            const nextUser = buildMockUser(credentials.email);
+            await AsyncStorage.multiSet([
+                [MOCK_SESSION_KEY, 'true'],
+                [MOCK_USER_EMAIL_KEY, nextUser.email],
+            ]);
+            setUser(nextUser);
+            setHasSession(true);
+            return;
+        }
+
         await authService.login(credentials);
         setHasSession(true);
 
@@ -104,6 +153,18 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }, [forceLocalLogout, refreshUser]);
 
     const loginWithGoogle = useCallback(async (idToken: string) => {
+        if (USE_MOCK_DATA) {
+            void idToken;
+            const nextUser = buildMockUser('google.user@tamkko.app');
+            await AsyncStorage.multiSet([
+                [MOCK_SESSION_KEY, 'true'],
+                [MOCK_USER_EMAIL_KEY, nextUser.email],
+            ]);
+            setUser(nextUser);
+            setHasSession(true);
+            return;
+        }
+
         await authService.loginWithGoogle(idToken);
         setHasSession(true);
 
@@ -116,6 +177,11 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }, [forceLocalLogout, refreshUser]);
 
     const signup = useCallback(async (data: SignupData) => {
+        if (USE_MOCK_DATA) {
+            await AsyncStorage.setItem(MOCK_USER_EMAIL_KEY, data.email);
+            return;
+        }
+
         try {
             await authService.signup(data);
         } catch (error: any) {
@@ -141,6 +207,12 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }, []);
 
     const verifySignupCode = useCallback(async (email: string, code: string) => {
+        if (USE_MOCK_DATA) {
+            void code;
+            await login({ email, password: 'mock_password' });
+            return;
+        }
+
         await authService.verifySignupCode({ email, code });
 
         const pending = await authService.consumePendingSignupCredentials(email);
@@ -150,10 +222,15 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }, [login]);
 
     const logout = useCallback(async () => {
+        if (USE_MOCK_DATA) {
+            await forceLocalLogout();
+            return;
+        }
+
         await authService.logout();
         setHasSession(false);
         setUser(null);
-    }, []);
+    }, [forceLocalLogout]);
 
     return (
         <AuthContext.Provider

@@ -1,0 +1,1192 @@
+TAMKKO
+API & User Story Documentation
+Phase 1 — MVP
+Module
+VIP Community Rooms
+Version
+1.0.0
+Base URL
+https://api.tamkko.app/api/v1
+Real-Time Layer
+Socket.IO (over WebSocket)
+Auth Scheme
+JWT Bearer Token (REST) + Socket.IO auth handshake
+Payment Provider
+MTN Mobile Money via Hubtel (VIP room tips)
+Frontend
+React Native (Expo SDK 51+)
+Backend
+Django 5.x + DRF + Django Channels
+Depends On
+Authentication, Video Feed, Tipping & Wallet modules
+Table of Contents
+1.  Technology Stack & Dependencies
+2.  VIP Rooms — Architecture & Concepts
+2.1  What Is a VIP Room?
+2.2  Room Access & Entry Fee
+2.3  Socket.IO Events Reference
+2.4  Real-Time Connection Flow
+3.  Room Management (REST)
+3.1  Create a VIP Room
+3.2  Update Room Settings
+3.3  Get Room Details
+3.4  List Rooms by Creator
+3.5  Close / End a Room Session
+3.6  Delete a Room
+4.  Room Access & Entry (REST)
+4.1  Pay Entry Fee & Request Access Token
+4.2  Check Entry Payment Status
+4.3  Get Room Access Token (Already Paid)
+4.4  Get My Joined Rooms
+5.  Real-Time Chat (Socket.IO)
+5.1  Connect & Authenticate
+5.2  Join a Room
+5.3  Send a Chat Message
+5.4  Receive Chat Messages
+5.5  Send a Reaction (Emoji)
+5.6  Pin a Message (Creator Only)
+5.7  Delete a Message
+5.8  Mute / Unmute a Member (Creator Only)
+5.9  Kick a Member (Creator Only)
+5.10  Leave a Room
+5.11  Room Presence — Member List & Online Count
+5.12  Error Events
+6.  In-Room Tipping (REST + Socket.IO)
+6.1  Send a Tip Inside a Room (REST)
+6.2  Tip Received Event (Socket.IO)
+7.  Campus Creator Codes
+7.1  Generate a Creator Code
+7.2  Get My Creator Code
+7.3  Validate & Apply a Creator Code
+7.4  Get Code Usage Stats
+8.  Admin — VIP Rooms
+8.1  List All Rooms (Admin)
+8.2  Get Room Detail with Message History (Admin)
+8.3  Force-Close a Room
+8.4  Get Reported Messages Queue
+8.5  Resolve a Message Report
+9.  Error Code Reference
+1. Technology Stack & Dependencies
+VIP Rooms combine a REST API (for room management, entry payments, and persistence) with a Socket.IO real-time layer (for live chat, reactions, and presence). Both layers run on the same Django backend — REST via DRF and real-time via Django Channels with Redis as the channel layer.
+1.1  Backend — Django / Python
+Category
+Package / Service
+Purpose
+WebSocket
+channels + daphne
+ASGI server and WebSocket support for Django. Replaces Gunicorn for real-time endpoints.
+Channel Layer
+channels-redis
+Redis-backed channel layer so Socket.IO messages fan out across multiple Django workers
+Socket.IO
+python-socketio + aiohttp
+Socket.IO server integrated with Django Channels. Handles rooms, namespaces, events.
+Session Store
+Redis (django-redis)
+Stores Socket.IO session state, room membership, online counts, mute lists
+Message History
+PostgreSQL (Django ORM)
+Persists last 200 messages per room for late-joining members
+Payment
+Hubtel API (via httpx)
+Entry fee and in-room tip payments via MTN MoMo
+Task Queue
+Celery + Redis
+Background: process entry fee callbacks, auto-close expired rooms, send tip notifications
+Rate Limiting
+django-ratelimit + Redis
+Per-socket message rate limiting to prevent chat spam
+Sentry
+sentry-sdk
+Error tracking for both REST and WebSocket layers
+1.2  Frontend — React Native (Expo)
+Category
+Package / Service
+Purpose
+Socket.IO Client
+socket.io-client
+WebSocket connection to the Tamkko Socket.IO server. Use v4 to match server version.
+Chat UI
+@flyerhq/react-native-chat-ui
+Pre-built chat bubble UI optimised for React Native — handles message list, input bar, keyboard avoidance
+Emoji Reactions
+rn-emoji-keyboard
+Emoji picker for reaction events
+Presence
+socket.io-client (built-in)
+Online member count updates via Socket.IO events — no polling needed
+Animations
+react-native-reanimated
+Animate tip celebration overlay and reaction bubbles floating up the screen
+Bottom Sheet
+@gorhom/bottom-sheet
+Member list, room settings, and tip panel as sliding bottom sheets
+Payment
+axios + zustand
+Entry fee MoMo payment initiation and status polling
+Haptics
+expo-haptics
+Haptic on tip received, on being mentioned in chat
+Deep Links
+expo-linking
+tamkko://room/{room_id} deep links for sharing rooms
+2. VIP Rooms — Architecture & Concepts
+2.1  What Is a VIP Room?
+A VIP Room is a private, real-time group chat space created by a creator. Think of it as a live backstage pass — a place where paying fans can chat directly with the creator and each other in real time. Rooms can be tied to a specific event, a video drop, a Q&A session, or simply kept open as an ongoing community space. Only users who have paid the entry fee (or been granted free access by the creator) can join the chat.
+Each creator can have multiple rooms — e.g. a general community room, an event room for a music drop, a study group room.
+Rooms have a configurable capacity (default 500 members, max 2,000 in Phase 1).
+Messages are persisted for 30 days. The last 200 messages are sent to late-joining members as chat history.
+Creators can pin messages, mute members, and kick members at any time.
+Viewers can tip the creator directly inside the room — tips trigger a celebration animation visible to all members.
+Campus Creator Codes (Section 7) allow university/campus-specific creators to generate invite codes giving free or discounted entry to verified students.
+2.2  Room Access & Entry Fee
+ℹ️
+Entry fees are one-time per room — not recurring. Once a user has paid to join a room, they are a permanent member and can rejoin at any time without paying again (unless the creator resets membership, which is an admin-level action). Free rooms (entry_fee_ghs: 0.00) require no payment but still require the user to explicitly join.
+entry_fee_ghs: 0.00 — Free room. Any authenticated user can join instantly with no payment.
+entry_fee_ghs: > 0.00 — Paid room. User must complete MoMo payment before receiving an access token.
+Creator earnings from entry fees: 85% (same as tips). Platform fee: 15%.
+The creator always has access to their own room regardless of entry fee.
+Subscribers (Section 4 of Tipping & Wallet doc) get free entry to all of a creator's paid rooms while their subscription is active.
+2.3  Socket.IO Events Reference
+Quick reference of all Socket.IO events used in VIP Rooms. Full documentation for each is in Section 5.
+Event Name
+Direction
+Trigger
+Description
+room:join
+Client → Server
+User taps Enter Room
+Join a room channel after authentication
+room:joined
+Server → Client
+After room:join
+Confirms join, sends room state + last 200 messages
+message:send
+Client → Server
+User sends chat message
+Send a text or emoji message to the room
+message:new
+Server → All in room
+After message:send
+Broadcasts new message to all members
+reaction:send
+Client → Server
+User taps emoji
+Send a floating emoji reaction
+reaction:new
+Server → All in room
+After reaction:send
+Broadcasts reaction to all members
+message:pin
+Client → Server
+Creator pins a message
+Pin a message to the top of the chat
+message:pinned
+Server → All in room
+After message:pin
+Notifies all members of new pinned message
+message:delete
+Client → Server
+Creator/owner deletes
+Delete a message from the chat
+message:deleted
+Server → All in room
+After message:delete
+Notifies all members of deleted message
+member:mute
+Client → Server
+Creator mutes member
+Mute a member (they can see chat but not send)
+member:muted
+Server → All in room
+After member:mute
+Notifies room of muted member
+member:kick
+Client → Server
+Creator kicks member
+Remove a member from the room session
+member:kicked
+Server → Client
+After member:kick
+Tells the kicked user they have been removed
+member:left
+Server → All in room
+User disconnects/leaves
+Notifies room of member departure
+presence:update
+Server → All in room
+Member joins or leaves
+Updated online member count
+tip:sent
+Client → Server
+User sends in-room tip
+Initiate tip payment inside room
+tip:received
+Server → All in room
+Tip payment confirmed
+Tip celebration visible to all members
+room:closed
+Server → All in room
+Creator closes room
+Notifies all members room is ending
+error
+Server → Client
+Any invalid action
+Error event with code and message
+2.4  Real-Time Connection Flow
+Step-by-step flow from app open to active chat:
+User navigates to a VIP Room in the app. If the room requires an entry fee and the user has not paid, they see the entry fee screen. They initiate payment via POST /api/v1/rooms/{room_id}/access (Section 4.1) and complete the MoMo flow.
+Once payment is confirmed (or for free rooms, immediately), the app calls GET /api/v1/rooms/{room_id}/access/token (Section 4.3) to get a short-lived room_access_token.
+The Expo app creates a Socket.IO connection: const socket = io('wss://api.tamkko.app', { auth: { token: accessToken, room_access_token: roomAccessToken } })
+The server verifies both tokens. The JWT identifies the user. The room_access_token confirms they have paid entry. If either is invalid, the server emits an error event and disconnects.
+The app emits room:join with the room_id. The server adds the socket to the room channel, emits room:joined back with the current room state and last 200 messages, and broadcasts a presence:update to all other members.
+The user is now in the live chat. Outgoing messages use socket.emit('message:send', payload). Incoming messages, reactions, tips, and presence updates arrive as socket.on() listeners.
+When the user leaves (navigates away or backgrounds the app), the app calls socket.emit('room:leave') then socket.disconnect(). The server broadcasts member:left and presence:update to remaining members.
+3. Room Management (REST)
+3.1  Create a VIP Room
+👤
+User Story:  As a creator, I want to create a VIP Room with a name, description, entry fee, and capacity so my fans can join and chat with me in real time.
+POST
+/api/v1/rooms
+Create Room
+Auth Required
+Yes — Authorization: Bearer {access_token}
+Limit
+Max 10 active rooms per creator at a time
+📤  Request Body
+{
+"name": "Accra Music Fans 🎵",
+"description": "My private community for music lovers in Ghana. Drop in and let's vibe.",
+"entry_fee_ghs": "5.00",
+"capacity": 500,
+"is_public": true,
+"allow_tips": true,
+"welcome_message": "Welcome to the room! Drop a 👋 to say hi."
+}
+entry_fee_ghs: Set to 0.00 for a free room. Minimum paid entry is GHS 1.00.
+is_public: If true, the room appears in the creator's profile and in search. If false, only users with a direct link or campus code can find it.
+201
+Created
+✅  Response Body
+{
+"status": "success",
+"message": "VIP Room created successfully.",
+"data": {
+"room": {
+"id": "room_4a5b6c7d",
+"name": "Accra Music Fans 🎵",
+"description": "My private community for music lovers in Ghana. Drop in and let's vibe.",
+"entry_fee_ghs": "5.00",
+"is_free": false,
+"capacity": 500,
+"member_count": 1,
+"online_count": 1,
+"is_public": true,
+"allow_tips": true,
+"welcome_message": "Welcome to the room! Drop a 👋 to say hi.",
+"status": "active",
+"creator": {
+"id": "usr_8k2m9x4p",
+"username": "kwame_creates",
+"display_name": "Kwame Asante",
+"profile_picture": "https://cdn.tamkko.app/avatars/usr_8k2m9x4p.jpg"
+},
+"share_url": "https://tamkko.app/room/room_4a5b6c7d",
+"deep_link": "tamkko://room/room_4a5b6c7d",
+"created_at": "2025-03-01T12:00:00Z"
+}
+}
+}
+3.2  Update Room Settings
+👤
+User Story:  As a creator, I want to update my room's name, description, entry fee, or capacity after creating it.
+PATCH
+/api/v1/rooms/{room_id}
+Update Room
+Auth Required
+Yes — must be the room creator
+Note
+Changing entry_fee_ghs only affects new members. Existing paid members retain access. Reducing capacity below current member_count returns 400 CAPACITY_BELOW_MEMBER_COUNT.
+📤  Request Body (all fields optional)
+{
+"name": "Accra Music Fans — Official 🎵🇬🇭",
+"description": "Updated description.",
+"capacity": 1000,
+"allow_tips": true,
+"welcome_message": "Big room upgrade! Welcome everyone 🙌"
+}
+200
+OK — same shape as Create Room response
+3.3  Get Room Details
+👤
+User Story:  As a user browsing a creator's profile, I want to see their VIP Rooms — the name, entry fee, how many members are online, and whether I have already joined.
+GET
+/api/v1/rooms/{room_id}
+Get Room
+Auth Required
+No — but authenticated users get has_joined and has_paid populated
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"data": {
+"room": {
+"id": "room_4a5b6c7d",
+"name": "Accra Music Fans 🎵",
+"description": "My private community for music lovers in Ghana.",
+"entry_fee_ghs": "5.00",
+"is_free": false,
+"capacity": 500,
+"member_count": 347,
+"online_count": 42,
+"is_public": true,
+"allow_tips": true,
+"status": "active",
+"creator": {
+"id": "usr_8k2m9x4p",
+"username": "kwame_creates",
+"display_name": "Kwame Asante",
+"profile_picture": "https://cdn.tamkko.app/avatars/usr_8k2m9x4p.jpg"
+},
+"viewer_state": {
+"has_joined": true,
+"has_paid": true,
+"is_muted": false,
+"joined_at": "2025-03-01T10:00:00Z"
+},
+"share_url": "https://tamkko.app/room/room_4a5b6c7d",
+"deep_link": "tamkko://room/room_4a5b6c7d",
+"created_at": "2025-03-01T12:00:00Z"
+}
+}
+}
+3.4  List Rooms by Creator
+GET
+/api/v1/users/{username}/rooms
+Creator's Rooms
+Auth Required
+No — public rooms are visible to all. Private rooms only visible to members.
+Query Params
+cursor, limit (default 20), status (active | closed)
+✅  Response (200 OK)
+{
+"status": "success",
+"data": {
+"rooms": [
+{
+"id": "room_4a5b6c7d",
+"name": "Accra Music Fans 🎵",
+"entry_fee_ghs": "5.00",
+"is_free": false,
+"member_count": 347,
+"online_count": 42,
+"status": "active",
+"viewer_state": {
+"has_joined": false,
+"has_paid": false
+}
+}
+],
+"next_cursor": null,
+"has_more": false
+}
+}
+3.5  Close / End a Room Session
+👤
+User Story:  As a creator, I want to temporarily close my room (e.g. after a live session ends) without deleting it. Closing broadcasts room:closed to all connected members and disconnects them. The room can be reopened at any time.
+POST
+/api/v1/rooms/{room_id}/close
+Close Room Session
+Auth Required
+Yes — must be the room creator or an admin
+📤  Request Body
+{
+"closing_message": "Wrapping up for tonight! Back tomorrow at 8pm 🙌"
+}
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"message": "Room closed. All connected members have been notified.",
+"data": {
+"room_id": "room_4a5b6c7d",
+"status": "closed",
+"members_disconnected": 42,
+"closed_at": "2025-03-01T22:00:00Z"
+}
+}
+3.6  Delete a Room
+👤
+User Story:  As a creator, I want to permanently delete a room I no longer need. All message history, member records, and entry payment associations are removed.
+DELETE
+/api/v1/rooms/{room_id}
+Delete Room
+Auth Required
+Yes — must be the room creator
+Note
+Room must be closed first. Returns 409 ROOM_STILL_ACTIVE if there are connected members.
+✅  Response (200 OK)
+{
+"status": "success",
+"message": "Room deleted permanently."
+}
+4. Room Access & Entry (REST)
+ℹ️
+Entry to a paid VIP Room requires two steps: (1) Pay the entry fee via MoMo (REST — Section 4.1–4.2). (2) Exchange the payment confirmation for a short-lived room_access_token (REST — Section 4.3), then use that token to authenticate the Socket.IO connection. Free rooms skip step 1 and go straight to step 2.
+4.1  Pay Entry Fee & Request Access Token
+👤
+User Story:  As a viewer who wants to join a paid VIP Room, I want to pay the entry fee using my MTN MoMo account so I become a permanent member of the room.
+POST
+/api/v1/rooms/{room_id}/access
+Pay Room Entry
+Auth Required
+Yes — Authorization: Bearer {access_token}
+Free rooms
+For free rooms (entry_fee_ghs: 0.00), send an empty request body {}. No MoMo fields needed. Returns 200 with room_access_token immediately.
+Subscribers
+Active subscribers to the creator get free entry. Send empty body {} — backend checks subscription status automatically.
+Already joined
+Returns 409 ALREADY_ROOM_MEMBER with existing access token — no new charge.
+📤  Request Body (paid rooms only)
+{
+"momo_number": "+233241234567",
+"momo_provider": "MTN"
+}
+201
+Created — Entry fee payment initiated
+✅  Response — Paid room (poll required)
+{
+"status": "success",
+"message": "Payment initiated. Approve the MTN MoMo prompt on your phone to join the room.",
+"data": {
+"entry_id": "entry_9e0f1g2h",
+"room_id": "room_4a5b6c7d",
+"amount_ghs": "5.00",
+"status": "pending",
+"ussd_prompt_sent": true,
+"poll_url": "/api/v1/rooms/room_4a5b6c7d/access/entry_9e0f1g2h/status"
+}
+}
+✅  Response — Free room or subscriber (immediate access)
+{
+"status": "success",
+"message": "Welcome! You now have access to this room.",
+"data": {
+"entry_id": "entry_free_3i4j5k",
+"room_id": "room_4a5b6c7d",
+"status": "granted",
+"room_access_token": "rat_eyJhbGciOiJIUzI1NiJ9...",
+"token_expires_at": "2025-03-01T14:00:00Z"
+}
+}
+⚠️
+The room_access_token (rat_...) is a short-lived token (2 hours) used exclusively to authenticate the Socket.IO connection. It is separate from the user's JWT access token. It proves the user has paid for entry and prevents token reuse across devices. After 2 hours, the user calls GET /api/v1/rooms/{room_id}/access/token to get a fresh one (no new payment).
+4.2  Check Entry Payment Status
+👤
+User Story:  As a viewer who just paid the room entry fee, I want the app to confirm payment so I receive my room access token and can enter the live chat.
+GET
+/api/v1/rooms/{room_id}/access/{entry_id}/status
+Entry Payment Status
+Polling
+Every 3 seconds until status is 'granted' or 'failed'.
+✅  Response — Granted
+{
+"status": "success",
+"data": {
+"entry_id": "entry_9e0f1g2h",
+"status": "granted",
+"room_access_token": "rat_eyJhbGciOiJIUzI1NiJ9...",
+"token_expires_at": "2025-03-01T14:00:00Z",
+"message": "Payment confirmed! You are now a member of this room."
+}
+}
+4.3  Get Room Access Token (Already Paid)
+👤
+User Story:  As a returning member who paid the entry fee previously, I want to get a fresh room_access_token when I re-enter the room without paying again.
+GET
+/api/v1/rooms/{room_id}/access/token
+Get Room Token
+Auth Required
+Yes — must be an existing room member
+Use case
+Call every time the user opens the room — even if they were already a member. Tokens expire after 2 hours.
+✅  Response (200 OK)
+{
+"status": "success",
+"data": {
+"room_access_token": "rat_eyJhbGciOiJIUzI1NiJ9...",
+"token_expires_at": "2025-03-01T16:00:00Z",
+"room_id": "room_4a5b6c7d"
+}
+}
+4.4  Get My Joined Rooms
+👤
+User Story:  As a user, I want to see all the VIP Rooms I have joined so I can quickly navigate back to my communities.
+GET
+/api/v1/rooms/joined
+My Joined Rooms
+Auth Required
+Yes — Authorization: Bearer {access_token}
+Query Params
+cursor, limit (default 20), status (active | closed | all)
+✅  Response (200 OK)
+{
+"status": "success",
+"data": {
+"rooms": [
+{
+"id": "room_4a5b6c7d",
+"name": "Accra Music Fans 🎵",
+"entry_fee_ghs": "5.00",
+"online_count": 42,
+"status": "active",
+"has_unread": true,
+"creator": {
+"username": "kwame_creates",
+"display_name": "Kwame Asante",
+"profile_picture": "https://cdn.tamkko.app/avatars/usr_8k2m9x4p.jpg"
+},
+"joined_at": "2025-03-01T10:00:00Z"
+}
+],
+"next_cursor": null,
+"has_more": false
+}
+}
+5. Real-Time Chat (Socket.IO)
+ℹ️
+All Socket.IO events use the /rooms namespace. Connect to: wss://api.tamkko.app/rooms. Every event payload must include room_id. The server validates the room_access_token on connect and rejects invalid or expired tokens immediately.
+5.1  Connect & Authenticate
+Establish the Socket.IO connection with both the JWT access_token (identifies the user) and the room_access_token (proves room entry was paid). Both are passed in the auth object at connection time.
+Expo App — Establish Connection
+{
+"// Install: npm install socket.io-client": "",
+"const socket = io('wss://api.tamkko.app/rooms', {": "",
+"  auth: {": "",
+"    token: accessToken,": "",
+"    room_access_token: roomAccessToken": "",
+"  },": "",
+"  transports: ['websocket'],": "",
+"  reconnection: true,": "",
+"  reconnectionAttempts: 5,": "",
+"  reconnectionDelay: 2000": "",
+"})": ""
+}
+On successful connection, immediately emit room:join (Section 5.2). If authentication fails, the server emits an error event with code SOCKET_AUTH_FAILED and disconnects.
+5.2  Join a Room
+After connecting, emit room:join to subscribe to the room's event channel. The server responds with room:joined containing the current room state and message history.
+Client → Server  (emit: room:join)
+{
+"room_id": "room_4a5b6c7d"
+}
+Server → Client  (on: room:joined)
+{
+"room_id": "room_4a5b6c7d",
+"room_name": "Accra Music Fans 🎵",
+"online_count": 43,
+"member_count": 348,
+"pinned_message": {
+"id": "msg_x1y2z3",
+"text": "🎵 New track dropping tonight at 10pm! Don't miss it.",
+"sender": {
+"username": "kwame_creates",
+"is_creator": true
+},
+"pinned_at": "2025-03-01T12:30:00Z"
+},
+"history": [
+{
+"id": "msg_a1b2c3",
+"type": "text",
+"text": "This is so hype! 🔥",
+"sender": {
+"id": "usr_x1y2z3",
+"username": "fan_user_1",
+"display_name": "Ama Mensah",
+"profile_picture": "https://cdn.tamkko.app/avatars/usr_x1y2z3.jpg",
+"is_creator": false,
+"is_muted": false
+},
+"sent_at": "2025-03-01T13:00:00Z"
+}
+],
+"your_state": {
+"is_muted": false,
+"is_creator": false
+}
+}
+5.3  Send a Chat Message
+👤
+User Story:  As a room member, I want to type a message and send it to everyone in the room in real time.
+Client → Server  (emit: message:send)
+{
+"room_id": "room_4a5b6c7d",
+"text": "Can't wait for tonight!! 🎵🔥",
+"client_message_id": "cm_local_uuid_001"
+}
+client_message_id is a UUID generated by the Expo app. It is echoed back in the message:new broadcast so the sender can match their optimistic UI message to the confirmed server message.
+Rate Limit
+1 message per second per user. Exceeding this emits error with code MESSAGE_RATE_LIMITED.
+Max length
+500 characters. Longer messages are rejected with error code MESSAGE_TOO_LONG.
+Muted users
+Muted members receive error code MEMBER_IS_MUTED — their message is not sent.
+5.4  Receive Chat Messages
+All members (including the sender) receive message:new for every new message in the room.
+Server → All in room  (on: message:new)
+{
+"id": "msg_d4e5f6",
+"type": "text",
+"text": "Can't wait for tonight!! 🎵🔥",
+"client_message_id": "cm_local_uuid_001",
+"sender": {
+"id": "usr_x1y2z3",
+"username": "fan_user_1",
+"display_name": "Ama Mensah",
+"profile_picture": "https://cdn.tamkko.app/avatars/usr_x1y2z3.jpg",
+"is_creator": false,
+"is_muted": false
+},
+"room_id": "room_4a5b6c7d",
+"sent_at": "2025-03-01T13:05:00Z"
+}
+5.5  Send a Reaction (Emoji)
+👤
+User Story:  As a room member, I want to tap an emoji to send a floating reaction that everyone in the room sees animating up the screen — like a live concert light show.
+Client → Server  (emit: reaction:send)
+{
+"room_id": "room_4a5b6c7d",
+"emoji": "🔥"
+}
+Server → All in room  (on: reaction:new)
+{
+"emoji": "🔥",
+"sender_id": "usr_x1y2z3",
+"sender_username": "fan_user_1",
+"room_id": "room_4a5b6c7d",
+"sent_at": "2025-03-01T13:05:10Z"
+}
+Reactions are not persisted — they are ephemeral real-time events only. They do not appear in message history.
+5.6  Pin a Message (Creator Only)
+👤
+User Story:  As a creator, I want to pin an important message to the top of the chat so all members always see it, even new ones joining late.
+Client → Server  (emit: message:pin)
+{
+"room_id": "room_4a5b6c7d",
+"message_id": "msg_a1b2c3"
+}
+Server → All in room  (on: message:pinned)
+{
+"pinned_message": {
+"id": "msg_a1b2c3",
+"text": "🎵 New track dropping tonight at 10pm! Don't miss it.",
+"sender": {
+"username": "kwame_creates",
+"is_creator": true
+},
+"pinned_at": "2025-03-01T13:10:00Z"
+},
+"room_id": "room_4a5b6c7d"
+}
+5.7  Delete a Message
+A user can delete their own messages. The room creator can delete any message. Admins can delete any message via the admin REST endpoint.
+Client → Server  (emit: message:delete)
+{
+"room_id": "room_4a5b6c7d",
+"message_id": "msg_d4e5f6"
+}
+Server → All in room  (on: message:deleted)
+{
+"message_id": "msg_d4e5f6",
+"room_id": "room_4a5b6c7d",
+"deleted_by": "usr_x1y2z3",
+"deleted_at": "2025-03-01T13:06:00Z"
+}
+5.8  Mute / Unmute a Member (Creator Only)
+👤
+User Story:  As a creator, I want to mute a disruptive member so they can still read the chat but cannot send messages, without removing them from the room.
+Client → Server  (emit: member:mute)
+{
+"room_id": "room_4a5b6c7d",
+"target_user_id": "usr_x1y2z3",
+"muted": true,
+"reason": "Spamming"
+}
+Server → All in room  (on: member:muted)
+{
+"target_user_id": "usr_x1y2z3",
+"target_username": "fan_user_1",
+"muted": true,
+"room_id": "room_4a5b6c7d",
+"muted_by": "kwame_creates"
+}
+The muted user receives the same member:muted event and should show a UI indicator ('You have been muted by the creator'). To unmute, send the same event with muted: false.
+5.9  Kick a Member (Creator Only)
+👤
+User Story:  As a creator, I want to kick a member who is violating my room rules. They are immediately disconnected from the room session. They can rejoin (since they paid entry) unless the creator also bans them via the admin endpoint.
+Client → Server  (emit: member:kick)
+{
+"room_id": "room_4a5b6c7d",
+"target_user_id": "usr_x1y2z3",
+"reason": "Hate speech"
+}
+Server → Kicked user only  (on: member:kicked)
+{
+"room_id": "room_4a5b6c7d",
+"reason": "You have been removed from this room by the creator.",
+"can_rejoin": true
+}
+5.10  Leave a Room
+Call this when the user navigates away from the room screen. This cleanly unsubscribes the socket from the room channel and triggers presence:update for other members.
+Client → Server  (emit: room:leave)
+{
+"room_id": "room_4a5b6c7d"
+}
+After emitting room:leave, call socket.disconnect() if the user is closing the app entirely. If navigating to another room, keep the connection alive and emit room:join for the new room instead.
+5.11  Room Presence — Member List & Online Count
+The server broadcasts presence:update automatically whenever a member joins or leaves. The Expo app should update the online count badge in the header on every presence:update event.
+Server → All in room  (on: presence:update)
+{
+"room_id": "room_4a5b6c7d",
+"online_count": 44,
+"event": "joined",
+"user": {
+"id": "usr_y2z3a4",
+"username": "new_member_gh",
+"display_name": "Kofi Boateng",
+"profile_picture": "https://cdn.tamkko.app/avatars/usr_y2z3a4.jpg"
+}
+}
+event values: joined | left
+GET
+/api/v1/rooms/{room_id}/members
+Room Members (REST)
+Auth Required
+Yes — must be a room member
+Query Params
+cursor, limit (default 50), online_only (true/false)
+Use case
+Initial load of the member list panel. Use presence:update events to keep it live after that.
+✅  Response (200 OK)
+{
+"status": "success",
+"data": {
+"online_count": 44,
+"member_count": 348,
+"members": [
+{
+"id": "usr_8k2m9x4p",
+"username": "kwame_creates",
+"display_name": "Kwame Asante",
+"profile_picture": "https://cdn.tamkko.app/avatars/usr_8k2m9x4p.jpg",
+"is_creator": true,
+"is_online": true,
+"is_muted": false,
+"joined_at": "2025-03-01T12:00:00Z"
+}
+],
+"next_cursor": "cursor_mem_abc",
+"has_more": true
+}
+}
+5.12  Error Events
+The server emits an error event for any invalid action. The Expo app should listen for error events globally and show the appropriate UI feedback.
+Server → Client  (on: error)
+{
+"code": "MESSAGE_RATE_LIMITED",
+"message": "You are sending messages too fast. Please slow down.",
+"room_id": "room_4a5b6c7d"
+}
+Common error codes emitted via Socket.IO: SOCKET_AUTH_FAILED, ROOM_NOT_FOUND, ROOM_ACCESS_DENIED, ROOM_FULL, ROOM_CLOSED, MESSAGE_RATE_LIMITED, MESSAGE_TOO_LONG, MEMBER_IS_MUTED, PERMISSION_DENIED. Full descriptions in Section 9.
+6. In-Room Tipping (REST + Socket.IO)
+ℹ️
+In-room tips work identically to video tips (see Tipping & Wallet module) except they are sent inside a VIP Room context. When a tip is confirmed, the tip:received Socket.IO event fires to all room members — triggering a celebration overlay animation visible to everyone in the room.
+6.1  Send a Tip Inside a Room (REST)
+👤
+User Story:  As a room member, I want to send a tip directly to the creator inside the room so my contribution is celebrated in front of the whole community.
+POST
+/api/v1/rooms/{room_id}/tips
+Send Room Tip
+Auth Required
+Yes — Authorization: Bearer {access_token}
+Note
+Must be an active room member. Room tips use the same Hubtel MoMo flow as video tips. Poll /api/v1/tips/{tip_id}/status for confirmation.
+📤  Request Body
+{
+"amount_ghs": "20.00",
+"momo_number": "+233241234567",
+"momo_provider": "MTN",
+"message": "You're amazing! Keep going 🔥🇬🇭"
+}
+201
+Created — Tip initiated, poll for confirmation
+✅  Response Body
+{
+"status": "success",
+"message": "Payment initiated. Approve the MTN MoMo prompt on your phone.",
+"data": {
+"tip_id": "tip_r3s4t5u6",
+"room_id": "room_4a5b6c7d",
+"amount_ghs": "20.00",
+"creator_earnings_ghs": "17.00",
+"platform_fee_ghs": "3.00",
+"status": "pending",
+"poll_url": "/api/v1/tips/tip_r3s4t5u6/status"
+}
+}
+6.2  Tip Received Event (Socket.IO)
+When the backend confirms the MoMo payment via the Hubtel webhook, it broadcasts tip:received to all members currently connected to the room. The Expo app should play a celebration animation (coins or fireworks floating up) when this event is received.
+Server → All in room  (on: tip:received)
+{
+"tip_id": "tip_r3s4t5u6",
+"amount_ghs": "20.00",
+"message": "You're amazing! Keep going 🔥🇬🇭",
+"tipper": {
+"id": "usr_x1y2z3",
+"username": "fan_user_1",
+"display_name": "Ama Mensah",
+"profile_picture": "https://cdn.tamkko.app/avatars/usr_x1y2z3.jpg"
+},
+"creator": {
+"id": "usr_8k2m9x4p",
+"username": "kwame_creates"
+},
+"room_id": "room_4a5b6c7d",
+"confirmed_at": "2025-03-01T13:30:00Z"
+}
+A tip:received event also automatically inserts a system message into the chat: '🎉 @fan_user_1 sent a GHS 20.00 tip!' — this appears as a message:new event with type: 'system_tip' so it is stored in message history and visible to late-joining members.
+7. Campus Creator Codes
+ℹ️
+Campus Creator Codes are a Phase 1 growth feature. A creator can generate a unique invite code for their university or campus community. Sharing this code gives verified students free or discounted entry to the creator's VIP Rooms — creating organic growth through campus networks. Codes can be one-time use or multi-use, and can have an expiry date.
+7.1  Generate a Creator Code
+👤
+User Story:  As a creator, I want to generate a unique campus invite code for my university that I can share on WhatsApp and social media, giving students free or discounted entry to my VIP Room.
+POST
+/api/v1/rooms/{room_id}/codes
+Generate Creator Code
+Auth Required
+Yes — must be the room creator
+Limit
+Max 5 active codes per room at a time
+📤  Request Body
+{
+"label": "UG Students — Free Entry",
+"discount_type": "free",
+"discount_amount_ghs": null,
+"max_uses": 200,
+"expires_at": "2025-04-01T00:00:00Z",
+"campus": "University of Ghana"
+}
+discount_type options:
+free — Code grants complete free entry. discount_amount_ghs is ignored.
+fixed — Code reduces entry fee by a fixed GHS amount (e.g. GHS 2.00 off). Set discount_amount_ghs.
+percent — Code reduces entry fee by a percentage (e.g. 50% off). Set discount_amount_ghs to the percent (50).
+201
+Created
+✅  Response Body
+{
+"status": "success",
+"data": {
+"code": {
+"id": "code_7v8w9x0y",
+"code_string": "UG-KWAME-FREE",
+"label": "UG Students — Free Entry",
+"room_id": "room_4a5b6c7d",
+"discount_type": "free",
+"discount_amount_ghs": null,
+"max_uses": 200,
+"uses_count": 0,
+"expires_at": "2025-04-01T00:00:00Z",
+"campus": "University of Ghana",
+"is_active": true,
+"share_text": "Join my VIP Room for free! Use code UG-KWAME-FREE on Tamkko: tamkko://room/room_4a5b6c7d?code=UG-KWAME-FREE",
+"created_at": "2025-03-01T14:00:00Z"
+}
+}
+}
+7.2  Get My Creator Codes
+GET
+/api/v1/rooms/{room_id}/codes
+List Creator Codes
+Auth Required
+Yes — must be the room creator
+✅  Response (200 OK)
+{
+"status": "success",
+"data": {
+"codes": [
+{
+"id": "code_7v8w9x0y",
+"code_string": "UG-KWAME-FREE",
+"label": "UG Students — Free Entry",
+"discount_type": "free",
+"max_uses": 200,
+"uses_count": 47,
+"remaining_uses": 153,
+"expires_at": "2025-04-01T00:00:00Z",
+"is_active": true,
+"is_expired": false
+}
+]
+}
+}
+7.3  Validate & Apply a Creator Code
+👤
+User Story:  As a student who received a campus code, I want to enter the code on the room entry screen so it applies my discount or free entry before the MoMo payment step.
+POST
+/api/v1/rooms/{room_id}/codes/apply
+Apply Creator Code
+Auth Required
+Yes — Authorization: Bearer {access_token}
+Note
+Validation is non-destructive — the code use count is only incremented after successful entry payment (or immediately for free codes).
+📤  Request Body
+{
+"code_string": "UG-KWAME-FREE"
+}
+200
+OK — Code valid
+✅  Response Body
+{
+"status": "success",
+"data": {
+"code_id": "code_7v8w9x0y",
+"code_string": "UG-KWAME-FREE",
+"discount_type": "free",
+"original_fee_ghs": "5.00",
+"discounted_fee_ghs": "0.00",
+"savings_ghs": "5.00",
+"message": "Code applied! You get free entry to this room.",
+"proceed_as_free": true
+}
+}
+If proceed_as_free is true, the frontend skips the MoMo payment step entirely and calls POST /api/v1/rooms/{room_id}/access with an empty body {} — the backend will check the applied code and grant access automatically.
+7.4  Get Code Usage Stats
+GET
+/api/v1/rooms/{room_id}/codes/{code_id}/stats
+Code Stats
+Auth Required
+Yes — must be the room creator
+✅  Response (200 OK)
+{
+"status": "success",
+"data": {
+"code_id": "code_7v8w9x0y",
+"code_string": "UG-KWAME-FREE",
+"uses_count": 47,
+"max_uses": 200,
+"remaining_uses": 153,
+"revenue_waived_ghs": "235.00",
+"members_from_code": 47,
+"first_used_at": "2025-03-01T14:05:00Z",
+"last_used_at": "2025-03-01T15:30:00Z"
+}
+}
+8. Admin — VIP Rooms
+ℹ️
+All admin endpoints require an admin JWT token. Regular users receive 403 PERMISSION_DENIED.
+8.1  List All Rooms (Admin)
+GET
+/api/v1/admin/rooms
+All Rooms
+Query Params
+page, limit, status (active | closed), creator_id, has_reports (true/false), created_after
+✅  Response (200 OK)
+{
+"status": "success",
+"data": {
+"rooms": [
+{
+"id": "room_4a5b6c7d",
+"name": "Accra Music Fans 🎵",
+"creator": {
+"id": "usr_8k2m9x4p",
+"username": "kwame_creates"
+},
+"entry_fee_ghs": "5.00",
+"member_count": 348,
+"online_count": 42,
+"status": "active",
+"report_count": 0,
+"total_entry_revenue_ghs": "1740.00",
+"created_at": "2025-03-01T12:00:00Z"
+}
+],
+"pagination": {
+"current_page": 1,
+"total_pages": 12,
+"total_rooms": 240
+}
+}
+}
+8.2  Get Room Detail with Message History (Admin)
+GET
+/api/v1/admin/rooms/{room_id}
+Room Detail
+Returns full room metadata, all creator codes and their usage, complete message history (paginated), all entry payment records, all member records, and all reports. Used for moderation investigations.
+8.3  Force-Close a Room
+👤
+User Story:  As an admin, I want to immediately force-close a room that is hosting illegal or violating content. All connected members are disconnected and the room status is set to 'suspended'.
+POST
+/api/v1/admin/rooms/{room_id}/force-close
+Force-Close Room
+📤  Request Body
+{
+"reason": "Room found to be hosting content that violates community guidelines.",
+"notify_creator": true,
+"status": "suspended"
+}
+status values: suspended (can be reinstated by admin) | permanently_closed (cannot be reopened)
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"message": "Room force-closed. 42 members disconnected and creator notified.",
+"data": {
+"room_id": "room_4a5b6c7d",
+"new_status": "suspended",
+"members_disconnected": 42,
+"notification_sent": true
+}
+}
+8.4  Get Reported Messages Queue
+GET
+/api/v1/admin/rooms/reports
+Reported Messages
+Query Params
+page, limit, status (pending | resolved | dismissed), room_id, sort (newest | report_count)
+✅  Response (200 OK)
+{
+"status": "success",
+"data": {
+"reports": [
+{
+"report_id": "rpt_m1n2o3",
+"message_id": "msg_d4e5f6",
+"message_text": "Reported message content here",
+"room_id": "room_4a5b6c7d",
+"room_name": "Accra Music Fans 🎵",
+"sender": {
+"username": "fan_user_1"
+},
+"report_count": 3,
+"reasons": [
+"hate_speech",
+"offensive_content"
+],
+"status": "pending",
+"reported_at": "2025-03-01T13:10:00Z"
+}
+],
+"pagination": {
+"current_page": 1,
+"total_pages": 2,
+"total_pending": 18
+}
+}
+}
+8.5  Resolve a Message Report
+PATCH
+/api/v1/admin/rooms/reports/{report_id}/resolve
+Resolve Message Report
+📤  Request Body
+{
+"action": "delete_message",
+"notes": "Message contained hate speech. Deleted and sender warned."
+}
+action options: delete_message | dismiss | warn_sender | ban_sender_from_room
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"message": "Report resolved.",
+"data": {
+"report_id": "rpt_m1n2o3",
+"action_taken": "delete_message",
+"resolved_at": "2025-03-01T14:00:00Z"
+}
+}
+9. Error Code Reference
+REST errors use the standard JSON envelope with a code field. Socket.IO errors are emitted as the error event with the same code string.
+Error Code
+HTTP
+Description
+ROOM_NOT_FOUND
+404
+Room with the given ID does not exist or has been deleted
+ROOM_FULL
+400
+Room has reached its member capacity — cannot join
+ROOM_CLOSED
+403
+Room is currently closed — entry is not permitted
+ROOM_SUSPENDED
+403
+Room has been suspended by admin — contact support
+ROOM_STILL_ACTIVE
+409
+Room must be closed before it can be deleted
+ROOM_ACCESS_DENIED
+403
+User does not have a valid room_access_token for this room
+ALREADY_ROOM_MEMBER
+409
+User is already a member of this room — returns existing access token
+NOT_ROOM_MEMBER
+403
+User must join the room before accessing this endpoint
+ENTRY_NOT_FOUND
+404
+Entry payment record not found
+ENTRY_PAYMENT_FAILED
+400
+MoMo payment for room entry was rejected or timed out
+CODE_NOT_FOUND
+404
+Creator code does not exist or belongs to a different room
+CODE_EXPIRED
+400
+Creator code has passed its expiry date
+CODE_EXHAUSTED
+400
+Creator code has reached its maximum number of uses
+CODE_ALREADY_USED
+409
+This user has already applied this code
+MAX_ROOMS_REACHED
+400
+Creator already has 10 active rooms — delete or close one first
+MAX_CODES_REACHED
+400
+Room already has 5 active codes — deactivate one first
+CAPACITY_BELOW_MEMBER_COUNT
+400
+Cannot reduce capacity below the current number of members
+SOCKET_AUTH_FAILED
+401
+JWT or room_access_token is missing, invalid, or expired
+MESSAGE_RATE_LIMITED
+429
+Sending messages too fast — max 1 per second
+MESSAGE_TOO_LONG
+400
+Message exceeds the 500 character limit
+MEMBER_IS_MUTED
+403
+User is muted in this room and cannot send messages
+CANNOT_MUTE_CREATOR
+403
+Cannot mute the room creator
+CANNOT_KICK_CREATOR
+403
+Cannot kick the room creator
+PERMISSION_DENIED
+403
+User does not have the required role for this action
+INTERNAL_SERVER_ERROR
+500
+Unexpected server error — logged to Sentry automatically

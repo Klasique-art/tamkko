@@ -1,0 +1,1251 @@
+TAMKKO
+API & User Story Documentation
+Phase 1 — MVP
+Module
+Video Feed & Upload
+Version
+1.0.0
+Base URL
+https://api.tamkko.app/api/v1
+Auth Scheme
+JWT Bearer Token
+Frontend
+React Native (Expo SDK 51+)
+Backend
+Django 5.x + DRF
+Video CDN
+Cloudflare Stream
+Media Store
+Cloudflare R2
+Table of Contents
+1.  Technology Stack & Dependencies
+2.  Cloudflare Stream — How It Works
+3.  Video Upload
+3.1  Request Upload URL (Cloudflare Stream Direct Upload)
+3.2  Confirm Upload & Save Video Metadata
+3.3  Get Upload Status / Processing State
+3.4  Update Video Details (Title, Caption, Hashtags, Visibility)
+3.5  Delete Own Video
+4.  Video Feed
+4.1  Get For You Feed (Algorithmic)
+4.2  Get Following Feed
+4.3  Get Trending Videos
+4.4  Get Single Video
+4.5  Get Videos by Creator (Profile Page)
+4.6  Report Video Progress (Watch Time Tracking)
+5.  Video Interactions
+5.1  Like / Unlike a Video (Toggle)
+5.2  Get Video Likes Count
+5.3  Comments — Get Comments on a Video
+5.4  Comments — Post a Comment
+5.5  Comments — Reply to a Comment
+5.6  Comments — Like / Unlike a Comment
+5.7  Comments — Delete Own Comment
+5.8  Share a Video (Generate Share Link)
+5.9  Save / Bookmark a Video (Toggle)
+5.10  Get Saved / Bookmarked Videos
+6.  User Search & Discovery
+6.1  Search Autocomplete Suggestions
+6.2  Search Users (Full Results)
+6.3  Search Videos by Hashtag
+6.4  Get Trending Hashtags
+7.  Hashtags
+7.1  Get Videos for a Hashtag
+8.  Admin — Video Moderation
+8.1  List All Videos (Admin)
+8.2  Get Video Detail (Admin)
+8.3  Remove / Take Down a Video
+8.4  Restore a Taken-Down Video
+8.5  Get Reported Videos Queue
+8.6  Resolve a Report
+9.  Error Code Reference
+1. Technology Stack & Dependencies
+All packages below are required for the Video Feed & Upload module. Cloudflare Stream is the core video infrastructure — it handles transcoding, adaptive streaming, and CDN delivery. Never store raw video files on the Django server or in Cloudflare R2.
+1.1  Backend — Django / Python
+Category
+Package / Service
+Purpose
+Video CDN
+Cloudflare Stream API
+Video upload, transcoding, playback token generation, thumbnail extraction
+Media Storage
+Cloudflare R2 + django-storages
+Thumbnails and video cover images only (not raw video files)
+REST API
+djangorestframework
+REST endpoints
+Pagination
+djangorestframework (CursorPagination)
+Cursor-based pagination for infinite scroll feeds — more efficient than page numbers for large datasets
+HTTP Client
+httpx or requests
+Server-side calls to Cloudflare Stream API
+Task Queue
+celery + redis
+Background jobs: poll Cloudflare Stream status, send upload-complete notifications
+Cache
+redis + django-redis
+Cache feed results, trending hashtags, video metadata
+Webhook
+django (custom view)
+Receive Cloudflare Stream webhooks for video ready / error events
+Search
+django ORM (icontains) / PostgreSQL full-text
+Username and hashtag search in Phase 1
+Rate Limiting
+django-ratelimit
+Throttle upload, comment, and like endpoints
+Sentry
+sentry-sdk
+Error tracking
+1.2  Frontend — React Native (Expo)
+Category
+Package / Service
+Purpose
+Video Player
+expo-av (Video component)
+Plays HLS streams from Cloudflare Stream with autoplay, mute, loop
+Upload
+expo-image-picker + expo-file-system + fetch (tus protocol)
+Pick video from gallery; upload directly to Cloudflare Stream via TUS resumable upload
+Camera
+expo-camera
+Record video directly in-app before upload
+Feed Scroll
+FlashList (Shopify)
+High-performance vertical list for the For You feed — much faster than FlatList for video feeds
+Feed Paging
+axios + cursor pagination
+Infinite scroll — fetches next page when user reaches end of list
+Thumbnails
+expo-video-thumbnails
+Generate a thumbnail preview from local video before upload
+Progress
+react-native-progress
+Upload progress bar UI
+Haptics
+expo-haptics
+Haptic feedback on like, comment submit
+Share
+expo-sharing + react-native-share
+Native share sheet for sharing video links
+Deep Links
+expo-linking
+Handle tamkko://video/{id} deep links from share
+Clipboard
+expo-clipboard
+Copy video share link to clipboard
+2. Cloudflare Stream — How It Works
+ℹ️
+Cloudflare Stream is a fully managed video hosting, transcoding, and streaming service. It is used instead of S3/R2 for video files because it automatically transcodes videos to HLS (adaptive bitrate), generates thumbnails, delivers via global CDN, and supports signed playback URLs to prevent hotlinking. The backend never stores video files — it only stores Cloudflare Stream metadata (video ID, playback URL, duration, etc.).
+Complete Video Upload Flow (Step by Step):
+User picks or records a video in the Expo app using expo-image-picker or expo-camera.
+The Expo app calls the backend: POST /api/v1/videos/upload/request. The backend calls the Cloudflare Stream API to create a direct upload URL. Cloudflare returns a one-time upload URL and a Cloudflare video ID.
+The backend saves a video record in the database with status: 'pending' and returns the upload URL and video ID to the Expo app.
+The Expo app uploads the raw video file directly to the Cloudflare upload URL using the TUS resumable upload protocol (tus-js-client or fetch with Content-Type: video/*). The video goes straight from the user's device to Cloudflare — it never passes through the Django server. This keeps the Django server fast and avoids bandwidth costs.
+Cloudflare receives the video and begins transcoding it into multiple HLS resolutions (360p, 480p, 720p, 1080p). This takes between 30 seconds and a few minutes depending on video length.
+Cloudflare sends a webhook event to POST /api/v1/webhooks/cloudflare-stream when transcoding is complete (status: ready) or fails (status: error).
+The backend webhook handler updates the video record in the database: sets status to 'ready', saves the playback URL, thumbnail URL, and duration.
+The Expo app polls GET /api/v1/videos/{video_id}/status every 3 seconds until status changes from 'processing' to 'ready', then shows the video as live.
+Viewers stream the video via the HLS playback URL from Cloudflare's CDN. The backend issues signed playback tokens for premium/locked videos to prevent unauthorised access.
+Video Visibility States:
+public — Visible to all users in the For You feed and on the creator's profile.
+followers_only — Visible only to users who follow the creator.
+premium — Locked. Viewers must pay a one-time fee to unlock (covered in Tipping & Wallet doc).
+private — Visible only to the creator. Does not appear in any feed.
+processing — Temporary state while Cloudflare transcodes the upload. Not visible to viewers.
+failed — Transcoding failed. Visible only to the creator with a retry option.
+removed — Taken down by admin moderation. Not visible to any user.
+Cloudflare Stream Signed Playback Tokens (for Premium Videos):
+For premium (locked) videos, the backend generates a signed JWT token using the Cloudflare Stream signing key. The token is embedded in the HLS URL and expires after a short window (e.g. 1 hour). Without a valid signed token, Cloudflare will reject the playback request. This means even if someone discovers the playback URL, they cannot watch the video without a valid, unexpired token issued by the Tamkko backend.
+3. Video Upload
+3.1  Request Upload URL (Cloudflare Stream Direct Upload)
+👤
+User Story:  As a creator, I want to start uploading a video by requesting a secure direct upload URL from the server, so my video is sent straight to Cloudflare without passing through Tamkko's backend server.
+POST
+/api/v1/videos/upload/request
+Request Upload URL
+Auth Required
+Yes — Authorization: Bearer {access_token}
+Rate Limit
+10 uploads per creator per hour
+Note
+This endpoint calls the Cloudflare Stream API server-side to generate a direct upload URL. No video data is sent to this endpoint — only metadata about the planned upload.
+📤  Request Body
+{
+"file_size_bytes": 52428800,
+"duration_seconds": 47,
+"title": "Accra vibes this evening 🇬🇭",
+"caption": "Just another beautiful evening in Accra. Tag someone who needs to see this!",
+"hashtags": [
+"accra",
+"ghana",
+"afrobeats",
+"tamkko"
+],
+"visibility": "public",
+"allow_comments": true,
+"allow_duet": false
+}
+Field explanations:
+file_size_bytes: size of the video file in bytes. Used by Cloudflare to pre-allocate the upload slot. Required.
+duration_seconds: estimated video duration. Optional but recommended — helps with validation of max allowed duration.
+visibility: public | followers_only | premium | private. Defaults to public if omitted.
+allow_comments: whether viewers can post comments on this video. Default true.
+allow_duet: reserved for Phase 3. Send false in Phase 1.
+hashtags: array of strings, no # symbol, max 10 hashtags, max 30 chars each.
+201
+Created — Upload URL generated
+✅  Response Body
+{
+"status": "success",
+"message": "Direct upload URL generated. Upload your video file to the upload_url within 30 minutes.",
+"data": {
+"video_id": "vid_7k3m8n2p",
+"cloudflare_uid": "ea95132c15732412d22c1476fa83f27a",
+"upload_url": "https://upload.videodelivery.net/tus/ea95132c15732412d22c1476fa83f27a",
+"upload_method": "TUS",
+"upload_expires_at": "2025-03-01T10:30:00Z",
+"max_duration_seconds": 180,
+"status": "pending"
+}
+}
+⚠️
+The upload_url is a one-time TUS endpoint provided by Cloudflare Stream. The Expo app must upload the video binary directly to this URL using the TUS resumable upload protocol. The upload_url expires after 30 minutes. If it expires before the upload completes, the user must call this endpoint again to get a fresh URL.
+400
+Bad Request — Validation error
+❌  Error Response
+{
+"status": "error",
+"message": "Validation failed",
+"errors": {
+"file_size_bytes": [
+"Video file size exceeds the 500 MB maximum"
+],
+"duration_seconds": [
+"Video duration exceeds the 3-minute (180 second) maximum for Phase 1"
+],
+"hashtags": [
+"Maximum 10 hashtags allowed"
+],
+"visibility": [
+"Invalid visibility value. Must be: public, followers_only, premium, or private"
+]
+}
+}
+3.2  Confirm Upload & Save Video Metadata
+👤
+User Story:  As a creator whose video has finished uploading to Cloudflare, I want to confirm the upload so the backend knows the file was received and can begin tracking its processing status.
+ℹ️
+This endpoint is called by the Expo app immediately after the TUS upload to Cloudflare completes successfully. It tells the backend to begin polling Cloudflare for processing status. In most cases the Cloudflare Stream webhook (Section 2) will update the status automatically — this endpoint is the fallback confirmation trigger.
+POST
+/api/v1/videos/{video_id}/upload/confirm
+Confirm Upload
+Auth Required
+Yes — Authorization: Bearer {access_token} (must be the creator who requested the upload)
+📤  Request Body
+{
+"cloudflare_uid": "ea95132c15732412d22c1476fa83f27a"
+}
+200
+OK — Upload confirmed, processing started
+✅  Response Body
+{
+"status": "success",
+"message": "Upload confirmed. Your video is being processed. This usually takes 1-3 minutes.",
+"data": {
+"video_id": "vid_7k3m8n2p",
+"status": "processing",
+"estimated_ready_in_seconds": 90
+}
+}
+3.3  Get Upload Status / Processing State
+👤
+User Story:  As a creator who just uploaded a video, I want to poll the processing status so the app can show me when my video is live and ready to be viewed.
+The Expo app should poll this endpoint every 3 seconds after confirming the upload. Once status is 'ready', stop polling and refresh the creator's video list. If status is 'failed', show an error with a retry button.
+GET
+/api/v1/videos/{video_id}/status
+Video Processing Status
+Auth Required
+Yes — must be the creator who owns this video
+200
+OK
+✅  Response — Video still processing
+{
+"status": "success",
+"data": {
+"video_id": "vid_7k3m8n2p",
+"processing_status": "processing",
+"percent_complete": 65,
+"message": "Your video is being transcoded. Almost ready!"
+}
+}
+✅  Response — Video ready
+{
+"status": "success",
+"data": {
+"video_id": "vid_7k3m8n2p",
+"processing_status": "ready",
+"percent_complete": 100,
+"playback_url": "https://customer-xyz.cloudflarestream.com/ea95132c15732412d22c1476fa83f27a/manifest/video.m3u8",
+"thumbnail_url": "https://customer-xyz.cloudflarestream.com/ea95132c15732412d22c1476fa83f27a/thumbnails/thumbnail.jpg",
+"duration_seconds": 47,
+"message": "Your video is live!"
+}
+}
+✅  Response — Processing failed
+{
+"status": "success",
+"data": {
+"video_id": "vid_7k3m8n2p",
+"processing_status": "failed",
+"error_code": "TRANSCODE_FAILED",
+"message": "Video processing failed. Please try uploading again. If this keeps happening, contact support."
+}
+}
+3.4  Update Video Details
+👤
+User Story:  As a creator, I want to edit the title, caption, hashtags, or visibility of a video I have already published.
+PATCH
+/api/v1/videos/{video_id}
+Update Video
+Auth Required
+Yes — must be the creator who owns this video
+Note
+All fields are optional. Only send the fields you want to change.
+📤  Request Body (all fields optional)
+{
+"title": "Accra sunset vibes 🌅",
+"caption": "Updated caption with more hashtags!",
+"hashtags": [
+"accra",
+"ghana",
+"sunset",
+"afrobeats",
+"tamkko"
+],
+"visibility": "public",
+"allow_comments": true
+}
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"message": "Video updated successfully.",
+"data": {
+"video_id": "vid_7k3m8n2p",
+"title": "Accra sunset vibes 🌅",
+"visibility": "public",
+"updated_at": "2025-03-01T12:00:00Z"
+}
+}
+3.5  Delete Own Video
+👤
+User Story:  As a creator, I want to permanently delete one of my videos. Deleting from Tamkko also deletes the video from Cloudflare Stream.
+DELETE
+/api/v1/videos/{video_id}
+Delete Video
+Auth Required
+Yes — must be the creator who owns the video
+Side Effects
+Deletes the video from Cloudflare Stream. Deletes all comments, likes, tip associations. Wallet earnings from this video are preserved.
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"message": "Video deleted successfully.",
+"data": {
+"video_id": "vid_7k3m8n2p",
+"cloudflare_deleted": true,
+"deleted_at": "2025-03-01T12:30:00Z"
+}
+}
+4. Video Feed
+ℹ️
+All feed endpoints use cursor-based pagination for infinite scroll. The next_cursor value from one response is passed as the cursor query parameter in the next request. When next_cursor is null, the feed has been exhausted. Never use page numbers for video feeds — cursors are more efficient and avoid duplicate videos when new content is inserted.
+4.1  Get For You Feed (Algorithmic)
+👤
+User Story:  As a user opening the app, I want to see a personalised vertical feed of short videos recommended to me based on what I watch, like, and interact with — just like TikTok's For You Page.
+Phase 1 algorithm: For the MVP the For You feed is a weighted combination of: (1) recent videos from creators the user follows — 40%, (2) trending videos from the past 48 hours by like count — 35%, (3) random recent public videos from Ghana creators — 25%. A proper ML recommendation engine can be introduced in Phase 2.
+GET
+/api/v1/feed/for-you
+For You Feed
+Auth Required
+No — but authenticated users get personalised results
+Query Params
+cursor (from previous response), limit (default 10, max 20)
+Cache
+Feed results are cached per user in Redis for 60 seconds to reduce DB load
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"data": {
+"videos": [
+{
+"id": "vid_7k3m8n2p",
+"cloudflare_uid": "ea95132c15732412d22c1476fa83f27a",
+"playback_url": "https://customer-xyz.cloudflarestream.com/ea95132c15732412d22c1476fa83f27a/manifest/video.m3u8",
+"thumbnail_url": "https://customer-xyz.cloudflarestream.com/ea95132c15732412d22c1476fa83f27a/thumbnails/thumbnail.jpg",
+"title": "Accra sunset vibes 🌅",
+"caption": "Just another beautiful evening in Accra!",
+"hashtags": [
+"accra",
+"ghana",
+"sunset"
+],
+"duration_seconds": 47,
+"visibility": "public",
+"allow_comments": true,
+"is_premium": false,
+"premium_price_ghs": null,
+"creator": {
+"id": "usr_8k2m9x4p",
+"username": "kwame_creates",
+"display_name": "Kwame Asante",
+"profile_picture": "https://cdn.tamkko.app/avatars/usr_8k2m9x4p.jpg",
+"is_verified": false,
+"is_following": true
+},
+"stats": {
+"views": 14820,
+"likes": 2341,
+"comments": 187,
+"shares": 94,
+"tips_count": 23
+},
+"viewer_state": {
+"has_liked": false,
+"has_commented": false,
+"has_bookmarked": false,
+"has_tipped": false
+},
+"created_at": "2025-03-01T08:00:00Z"
+}
+],
+"next_cursor": "cursor_eyJpZCI6InZpZF83azNtOG4ycCIsInRzIjoiMjAyNS0wMy0wMVQwODowMDowMFoifQ",
+"has_more": true
+}
+}
+4.2  Get Following Feed
+👤
+User Story:  As a logged-in user, I want to see a feed of only the creators I follow, so I never miss content from people I care about.
+GET
+/api/v1/feed/following
+Following Feed
+Auth Required
+Yes — Authorization: Bearer {access_token}
+Query Params
+cursor, limit (default 10, max 20)
+Response shape is identical to the For You feed (Section 4.1). Only the videos included differ — restricted to creators the authenticated user follows, ordered by most recent first.
+4.3  Get Trending Videos
+👤
+User Story:  As a user, I want to browse the trending videos on Tamkko right now — the videos with the most engagement in the past 48 hours.
+GET
+/api/v1/feed/trending
+Trending Feed
+Auth Required
+No — public endpoint
+Query Params
+cursor, limit (default 20), country (optional ISO code e.g. GH to filter by country)
+Cache
+Trending list is recalculated every 15 minutes and cached in Redis
+Trending score formula (Phase 1): (likes × 2) + (comments × 3) + (shares × 5) + (tips × 10), weighted by recency decay over 48 hours.
+4.4  Get Single Video
+👤
+User Story:  As a user who tapped a video from a search result, share link, or profile page, I want to load that specific video with all its details and my interaction state.
+GET
+/api/v1/videos/{video_id}
+Get Single Video
+Auth Required
+No — but authenticated users get viewer_state populated
+Premium videos
+If is_premium is true and the viewer has not paid, playback_url is null and a locked_preview_url is returned instead
+200
+OK
+✅  Response Body (same shape as feed item, shown in full for premium case)
+{
+"status": "success",
+"data": {
+"video": {
+"id": "vid_9p4q5r6s",
+"playback_url": null,
+"locked_preview_url": "https://customer-xyz.cloudflarestream.com/preview123/thumbnails/thumbnail.jpg",
+"thumbnail_url": "https://customer-xyz.cloudflarestream.com/preview123/thumbnails/thumbnail.jpg",
+"title": "Exclusive studio session 🎵",
+"caption": "This one is for my VIPs only.",
+"hashtags": [
+"exclusive",
+"studio",
+"music"
+],
+"duration_seconds": 120,
+"visibility": "premium",
+"is_premium": true,
+"premium_price_ghs": 20,
+"creator": {
+"id": "usr_8k2m9x4p",
+"username": "kwame_creates",
+"display_name": "Kwame Asante",
+"profile_picture": "https://cdn.tamkko.app/avatars/usr_8k2m9x4p.jpg"
+},
+"stats": {
+"views": 1024,
+"likes": 312,
+"comments": 44,
+"shares": 18,
+"tips_count": 87
+},
+"viewer_state": {
+"has_liked": false,
+"has_paid": false,
+"has_bookmarked": false,
+"has_tipped": false
+},
+"created_at": "2025-03-01T09:00:00Z"
+}
+}
+}
+4.5  Get Videos by Creator (Profile Page)
+👤
+User Story:  As a viewer on a creator's profile page, I want to see a grid of all their public videos ordered by most recent, just like TikTok's profile tab.
+GET
+/api/v1/users/{username}/videos
+Creator Videos
+Auth Required
+No — but authenticated users see their own private/premium videos if viewing own profile
+Query Params
+cursor, limit (default 20), visibility (optional filter: public | premium | private)
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"data": {
+"videos": [
+{
+"id": "vid_7k3m8n2p",
+"thumbnail_url": "https://customer-xyz.cloudflarestream.com/ea95132c/thumbnails/thumbnail.jpg",
+"title": "Accra sunset vibes 🌅",
+"duration_seconds": 47,
+"visibility": "public",
+"is_premium": false,
+"stats": {
+"views": 14820,
+"likes": 2341
+},
+"created_at": "2025-03-01T08:00:00Z"
+}
+],
+"next_cursor": "cursor_abc123",
+"has_more": true,
+"total_public_videos": 87
+}
+}
+4.6  Report Video Progress (Watch Time Tracking)
+👤
+User Story:  As the app, I want to silently report how much of a video a user has watched so the algorithm can improve recommendations and the creator can see average watch time in their analytics.
+This endpoint is called automatically by the Expo app in the background — not by the user. It should be called: (1) when the user swipes away from a video, and (2) every 10 seconds while a video is playing. Fire-and-forget — the app should not wait for a response before continuing. Use Axios with a short timeout.
+POST
+/api/v1/videos/{video_id}/progress
+Report Watch Progress
+Auth Required
+No — anonymous views are also tracked by session fingerprint
+Rate Limit
+1 request per video per user per 5 seconds to prevent spam
+📤  Request Body
+{
+"watched_seconds": 34,
+"total_seconds": 47,
+"completed": false,
+"source": "for_you_feed"
+}
+source options: for_you_feed | following_feed | trending | profile | search | direct_link | share
+200
+OK
+✅  Response Body
+{
+"status": "success"
+}
+5. Video Interactions
+5.1  Like / Unlike a Video (Toggle)
+👤
+User Story:  As a viewer, I want to double-tap or press the heart button to like a video I enjoyed. Pressing it again unlikes it.
+POST
+/api/v1/videos/{video_id}/like
+Like / Unlike Toggle
+Auth Required
+Yes — Authorization: Bearer {access_token}
+Behaviour
+Toggles like state. If not liked: likes. If already liked: unlikes.
+Rate Limit
+30 likes per minute per user (anti-bot)
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"data": {
+"has_liked": true,
+"total_likes": 2342
+}
+}
+5.2  Get Video Likes Count
+GET
+/api/v1/videos/{video_id}/likes
+Likes Count
+Auth Required
+No — public
+✅  Response (200 OK)
+{
+"status": "success",
+"data": {
+"video_id": "vid_7k3m8n2p",
+"total_likes": 2342,
+"has_liked": true
+}
+}
+5.3  Get Comments on a Video
+👤
+User Story:  As a viewer, I want to scroll through the comments on a video to see what others think, with replies collapsed under parent comments.
+GET
+/api/v1/videos/{video_id}/comments
+Get Comments
+Auth Required
+No — public. Authenticated users see their own has_liked per comment.
+Query Params
+cursor, limit (default 20), sort (top | newest — default newest)
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"data": {
+"comments": [
+{
+"id": "cmt_a1b2c3",
+"text": "This is so beautiful! Accra is amazing 🙌",
+"user": {
+"id": "usr_x1y2z3",
+"username": "fan_user_1",
+"display_name": "Ama Mensah",
+"profile_picture": "https://cdn.tamkko.app/avatars/usr_x1y2z3.jpg"
+},
+"likes": 42,
+"has_liked": false,
+"reply_count": 3,
+"replies": [],
+"is_pinned": false,
+"is_creator_comment": false,
+"created_at": "2025-03-01T09:15:00Z"
+}
+],
+"total_comments": 187,
+"next_cursor": "cursor_cmt_xyz",
+"has_more": true
+}
+}
+5.4  Post a Comment
+👤
+User Story:  As a viewer, I want to post a comment on a video to share my reaction with the creator and other viewers.
+POST
+/api/v1/videos/{video_id}/comments
+Post Comment
+Auth Required
+Yes — Authorization: Bearer {access_token}
+Rate Limit
+5 comments per minute per user
+Note
+If the video creator has disabled comments (allow_comments: false), this returns 403 COMMENTS_DISABLED
+📤  Request Body
+{
+"text": "This hits different at sunset! 🌅🇬🇭"
+}
+201
+Created
+✅  Response Body
+{
+"status": "success",
+"message": "Comment posted.",
+"data": {
+"comment": {
+"id": "cmt_d4e5f6",
+"text": "This hits different at sunset! 🌅🇬🇭",
+"user": {
+"id": "usr_8k2m9x4p",
+"username": "kwame_creates",
+"display_name": "Kwame Asante",
+"profile_picture": "https://cdn.tamkko.app/avatars/usr_8k2m9x4p.jpg"
+},
+"likes": 0,
+"reply_count": 0,
+"created_at": "2025-03-01T10:00:00Z"
+}
+}
+}
+5.5  Reply to a Comment
+👤
+User Story:  As a viewer or creator, I want to reply directly to a comment, with my reply nested visually under the original comment.
+POST
+/api/v1/videos/{video_id}/comments/{comment_id}/replies
+Reply to Comment
+Auth Required
+Yes — Authorization: Bearer {access_token}
+📤  Request Body
+{
+"text": "Thank you so much! 🙏 Accra never disappoints"
+}
+201
+Created — same shape as Post Comment response
+5.6  Like / Unlike a Comment (Toggle)
+POST
+/api/v1/videos/{video_id}/comments/{comment_id}/like
+Like / Unlike Comment
+Auth Required
+Yes — Authorization: Bearer {access_token}
+✅  Response (200 OK)
+{
+"status": "success",
+"data": {
+"has_liked": true,
+"total_likes": 43
+}
+}
+5.7  Delete Own Comment
+👤
+User Story:  As a user, I want to delete a comment I posted, or as a creator I want to delete any comment on my video.
+DELETE
+/api/v1/videos/{video_id}/comments/{comment_id}
+Delete Comment
+Auth Required
+Yes — Authorization: Bearer {access_token}
+Permission
+Comment owner can delete their own comment. Video creator can delete any comment on their video. Admin can delete any comment.
+✅  Response (200 OK)
+{
+"status": "success",
+"message": "Comment deleted."
+}
+5.8  Share a Video (Generate Share Link)
+👤
+User Story:  As a viewer, I want to share a video with friends outside the app by pressing the share button, which generates a link and opens the native share sheet.
+How it works: The Expo app calls this endpoint to log the share event and get the canonical share URL. It then passes that URL to expo-sharing or react-native-share to open the native OS share sheet (WhatsApp, SMS, Twitter, copy link, etc.). When someone taps the link, it opens tamkko://video/{video_id} if Tamkko is installed, or a web fallback page if not.
+POST
+/api/v1/videos/{video_id}/share
+Share Video
+Auth Required
+No — share links can be generated by anyone
+📤  Request Body
+{
+"platform": "whatsapp"
+}
+platform options: whatsapp | instagram | twitter | sms | copy_link | other — used for analytics tracking only.
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"data": {
+"share_url": "https://tamkko.app/v/vid_7k3m8n2p",
+"deep_link": "tamkko://video/vid_7k3m8n2p",
+"share_text": "Watch this on Tamkko: Accra sunset vibes 🌅 https://tamkko.app/v/vid_7k3m8n2p"
+}
+}
+5.9  Save / Bookmark a Video (Toggle)
+👤
+User Story:  As a viewer, I want to bookmark a video I want to come back to later, and remove the bookmark if I no longer want to save it.
+POST
+/api/v1/videos/{video_id}/bookmark
+Bookmark Toggle
+Auth Required
+Yes — Authorization: Bearer {access_token}
+✅  Response (200 OK)
+{
+"status": "success",
+"data": {
+"has_bookmarked": true,
+"message": "Video saved to your bookmarks."
+}
+}
+5.10  Get Saved / Bookmarked Videos
+👤
+User Story:  As a user, I want to view all the videos I have bookmarked so I can find them easily later.
+GET
+/api/v1/users/me/bookmarks
+My Bookmarks
+Auth Required
+Yes — Authorization: Bearer {access_token}
+Query Params
+cursor, limit (default 20)
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"data": {
+"bookmarks": [
+{
+"id": "vid_7k3m8n2p",
+"thumbnail_url": "https://customer-xyz.cloudflarestream.com/ea95132c/thumbnails/thumbnail.jpg",
+"title": "Accra sunset vibes 🌅",
+"duration_seconds": 47,
+"creator": {
+"username": "kwame_creates",
+"display_name": "Kwame Asante",
+"profile_picture": "https://cdn.tamkko.app/avatars/usr_8k2m9x4p.jpg"
+},
+"bookmarked_at": "2025-03-01T11:00:00Z"
+}
+],
+"next_cursor": "cursor_bkm_abc",
+"has_more": false
+}
+}
+6. User Search & Discovery
+ℹ️
+Search works in two stages — exactly like TikTok. Stage 1: As the user types, autocomplete suggestions appear instantly (debounced at 300ms). Stage 2: When the user presses Search or taps a suggestion, the full search results page loads with paginated results for both users and videos.
+6.1  Search Autocomplete Suggestions
+👤
+User Story:  As a user typing in the search bar, I want to see instant autocomplete suggestions — usernames, display names, and hashtags — appearing as I type, so I can quickly tap the right result without finishing my query.
+How it works: The frontend debounces this call at 300ms — it only fires if the user has stopped typing for 300 milliseconds. This prevents hammering the API on every keystroke. Results are cached in Redis for 30 seconds per query string so repeated common queries are served from cache.
+GET
+/api/v1/search/suggestions
+Autocomplete Suggestions
+Auth Required
+No — public endpoint
+Query Params
+q (the search string, min 2 chars), limit (default 8, max 15)
+Cache
+Results cached in Redis for 30 seconds per query string
+Example
+GET /api/v1/search/suggestions?q=kla&limit=8
+200
+OK
+✅  Response Body — query: 'kla'
+{
+"status": "success",
+"data": {
+"suggestions": [
+{
+"type": "user",
+"id": "usr_9m2k1p3q",
+"username": "klasique",
+"display_name": "Klasique",
+"profile_picture": "https://cdn.tamkko.app/avatars/usr_9m2k1p3q.jpg",
+"followers": 12400,
+"is_verified": false
+},
+{
+"type": "user",
+"id": "usr_4r5s6t7u",
+"username": "klaa2",
+"display_name": "Klaa Two",
+"profile_picture": "https://cdn.tamkko.app/avatars/usr_4r5s6t7u.jpg",
+"followers": 890,
+"is_verified": false
+},
+{
+"type": "user",
+"id": "usr_8v9w0x1y",
+"username": "klanp5",
+"display_name": "Klan P5",
+"profile_picture": "https://cdn.tamkko.app/avatars/usr_8v9w0x1y.jpg",
+"followers": 3201,
+"is_verified": false
+},
+{
+"type": "hashtag",
+"tag": "klassicghana",
+"video_count": 4821
+}
+]
+}
+}
+6.2  Search Users (Full Results)
+👤
+User Story:  As a user who pressed the search button, I want to see a full paginated list of all users whose username or display name matches what I typed, exactly like TikTok's user search results page.
+GET
+/api/v1/search/users
+Search Users
+Auth Required
+No — but authenticated users see is_following state
+Query Params
+q (required, min 2 chars), cursor, limit (default 20)
+Example
+GET /api/v1/search/users?q=klasique&limit=20
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"data": {
+"query": "klasique",
+"users": [
+{
+"id": "usr_9m2k1p3q",
+"username": "klasique",
+"display_name": "Klasique",
+"profile_picture": "https://cdn.tamkko.app/avatars/usr_9m2k1p3q.jpg",
+"bio": "Content creator. Ghana 🇬🇭",
+"country": "GH",
+"followers": 12400,
+"total_videos": 53,
+"is_verified": false,
+"is_following": false
+}
+],
+"next_cursor": "cursor_usr_abc",
+"has_more": false,
+"total_results": 1
+}
+}
+6.3  Search Videos by Hashtag
+👤
+User Story:  As a user, I want to search for videos tagged with a specific hashtag and see a grid of matching videos.
+GET
+/api/v1/search/videos
+Search Videos
+Auth Required
+No — public endpoint
+Query Params
+q (search term or hashtag), cursor, limit (default 20), sort (relevant | newest | popular)
+Example
+GET /api/v1/search/videos?q=accra&sort=popular
+Response shape: same as feed video objects (Section 4.1) but without viewer_state. Includes next_cursor and has_more for pagination.
+6.4  Get Trending Hashtags
+👤
+User Story:  As a user on the search / discover page, I want to see a list of hashtags that are trending right now so I can explore popular content.
+GET
+/api/v1/search/trending-hashtags
+Trending Hashtags
+Auth Required
+No — public
+Query Params
+limit (default 20), country (optional ISO code for country-specific trends)
+Cache
+Recalculated every 30 minutes, served from Redis cache
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"data": {
+"trending_hashtags": [
+{
+"tag": "accra",
+"video_count": 48210,
+"trending_score": 9420,
+"rank": 1
+},
+{
+"tag": "afrobeats",
+"video_count": 32100,
+"trending_score": 7810,
+"rank": 2
+},
+{
+"tag": "ghana2025",
+"video_count": 12400,
+"trending_score": 6340,
+"rank": 3
+}
+],
+"updated_at": "2025-03-01T10:30:00Z"
+}
+}
+7. Hashtags
+7.1  Get Videos for a Hashtag
+👤
+User Story:  As a user who tapped a hashtag anywhere in the app, I want to see a dedicated hashtag page showing all videos tagged with it, the total video count, and sorted by most popular.
+GET
+/api/v1/hashtags/{tag}/videos
+Hashtag Videos
+Auth Required
+No — public
+URL Param
+tag — the hashtag text without the # symbol (e.g. accra, not #accra)
+Query Params
+cursor, limit (default 20), sort (popular | newest)
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"data": {
+"hashtag": {
+"tag": "accra",
+"total_videos": 48210,
+"total_views": 9842000,
+"is_trending": true
+},
+"videos": [
+{
+"id": "vid_7k3m8n2p",
+"thumbnail_url": "https://customer-xyz.cloudflarestream.com/ea95132c/thumbnails/thumbnail.jpg",
+"title": "Accra sunset vibes 🌅",
+"duration_seconds": 47,
+"stats": {
+"views": 14820,
+"likes": 2341
+},
+"creator": {
+"username": "kwame_creates",
+"display_name": "Kwame Asante",
+"profile_picture": "https://cdn.tamkko.app/avatars/usr_8k2m9x4p.jpg"
+}
+}
+],
+"next_cursor": "cursor_htag_abc",
+"has_more": true
+}
+}
+8. Admin — Video Moderation
+ℹ️
+All admin video endpoints require an admin JWT token. They are prefixed with /api/v1/admin/. Regular users will receive 403 PERMISSION_DENIED.
+8.1  List All Videos (Admin)
+GET
+/api/v1/admin/videos
+List All Videos
+Auth Required
+Yes — Admin JWT
+Query Params
+page, limit, status (public|processing|removed|failed), creator_id, country, reported (true/false), created_after
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"data": {
+"videos": [
+{
+"id": "vid_7k3m8n2p",
+"title": "Accra sunset vibes 🌅",
+"thumbnail_url": "https://customer-xyz.cloudflarestream.com/ea95132c/thumbnails/thumbnail.jpg",
+"duration_seconds": 47,
+"visibility": "public",
+"status": "active",
+"report_count": 0,
+"creator": {
+"id": "usr_8k2m9x4p",
+"username": "kwame_creates",
+"country": "GH"
+},
+"stats": {
+"views": 14820,
+"likes": 2341
+},
+"created_at": "2025-03-01T08:00:00Z"
+}
+],
+"pagination": {
+"current_page": 1,
+"total_pages": 80,
+"total_videos": 1600
+}
+}
+}
+8.2  Get Video Detail (Admin)
+GET
+/api/v1/admin/videos/{video_id}
+Video Detail
+Returns full video metadata, Cloudflare Stream UID, processing history, all moderation actions, all reports with reporter details, and full comment list.
+8.3  Remove / Take Down a Video
+👤
+User Story:  As an admin, I want to immediately remove a video that violates community guidelines. The video is hidden from all feeds but not deleted from Cloudflare Stream (so it can be restored if the decision is reversed).
+PATCH
+/api/v1/admin/videos/{video_id}/status
+Update Video Status
+status values
+active — visible. removed — hidden from all users. restricted — visible only to creator.
+📤  Request Body
+{
+"status": "removed",
+"reason": "Community guidelines violation — explicit content",
+"notify_creator": true
+}
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"message": "Video vid_7k3m8n2p removed from the platform.",
+"data": {
+"video_id": "vid_7k3m8n2p",
+"new_status": "removed",
+"notification_sent": true,
+"removed_at": "2025-03-01T14:00:00Z"
+}
+}
+8.4  Restore a Taken-Down Video
+PATCH
+/api/v1/admin/videos/{video_id}/restore
+Restore Video
+📤  Request Body
+{
+"reason": "Appeal reviewed — content does not violate guidelines. Restoring.",
+"notify_creator": true
+}
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"message": "Video restored. It is now visible to the public.",
+"data": {
+"video_id": "vid_7k3m8n2p",
+"new_status": "active"
+}
+}
+8.5  Get Reported Videos Queue
+👤
+User Story:  As an admin, I want to see a queue of videos that have been reported by users, sorted by report count, so I can prioritise the most-flagged content first.
+GET
+/api/v1/admin/videos/reports
+Reported Videos Queue
+Auth Required
+Yes — Admin JWT
+Query Params
+page, limit (default 20), status (pending | resolved | dismissed), sort (report_count | newest)
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"data": {
+"reports": [
+{
+"report_id": "rpt_z1y2x3",
+"video_id": "vid_7k3m8n2p",
+"video_title": "Accra sunset vibes 🌅",
+"video_thumbnail": "https://customer-xyz.cloudflarestream.com/ea95132c/thumbnails/thumbnail.jpg",
+"creator": {
+"username": "kwame_creates",
+"country": "GH"
+},
+"report_count": 14,
+"reasons": [
+"inappropriate_content",
+"spam"
+],
+"status": "pending",
+"first_reported_at": "2025-03-01T09:00:00Z",
+"latest_report_at": "2025-03-01T13:00:00Z"
+}
+],
+"pagination": {
+"current_page": 1,
+"total_pages": 3,
+"total_pending": 42
+}
+}
+}
+8.6  Resolve a Report
+👤
+User Story:  As an admin, I want to mark a report as resolved after taking action, or dismiss it if the video does not violate guidelines.
+PATCH
+/api/v1/admin/videos/reports/{report_id}/resolve
+Resolve Report
+📤  Request Body
+{
+"action": "removed",
+"notes": "Video contains explicit content. Removed and creator notified."
+}
+action options: removed (take down video) | dismissed (no action, report closed) | warned (video stays up, creator warned)
+200
+OK
+✅  Response Body
+{
+"status": "success",
+"message": "Report resolved.",
+"data": {
+"report_id": "rpt_z1y2x3",
+"action_taken": "removed",
+"resolved_at": "2025-03-01T14:30:00Z"
+}
+}
+9. Error Code Reference
+All error responses follow the standard envelope. Use the code field for frontend error handling logic.
+Error Code
+HTTP
+Description
+VIDEO_NOT_FOUND
+404
+Video with the given ID does not exist or has been deleted
+VIDEO_REMOVED
+403
+Video has been removed by admin moderation
+VIDEO_PRIVATE
+403
+Video is private — only the creator can view it
+VIDEO_PREMIUM_LOCKED
+403
+Video is premium — viewer must pay to unlock playback
+UPLOAD_URL_EXPIRED
+400
+The Cloudflare upload URL has expired — request a new one
+TRANSCODE_FAILED
+500
+Cloudflare Stream failed to process the video — retry upload
+MAX_DURATION_EXCEEDED
+400
+Video duration exceeds the 3-minute Phase 1 limit
+MAX_FILE_SIZE_EXCEEDED
+413
+Video file size exceeds the 500 MB limit
+UPLOAD_RATE_LIMITED
+429
+Creator has exceeded the 10 uploads per hour limit
+COMMENTS_DISABLED
+403
+Creator has disabled comments on this video
+COMMENT_NOT_FOUND
+404
+Comment with the given ID does not exist
+LIKE_RATE_LIMITED
+429
+Too many like actions — slow down
+ALREADY_BOOKMARKED
+409
+Video is already bookmarked (only returned if toggle is disabled)
+HASHTAG_NOT_FOUND
+404
+No videos exist for this hashtag
+SEARCH_QUERY_TOO_SHORT
+400
+Search query must be at least 2 characters
+INVALID_VISIBILITY
+400
+visibility must be public, followers_only, premium, or private
+INVALID_CURSOR
+400
+Pagination cursor is malformed or expired — restart from the beginning
+PERMISSION_DENIED
+403
+User does not have permission to perform this action
+INTERNAL_SERVER_ERROR
+500
+Unexpected server error — logged to Sentry automatically
+Cloudflare Stream Webhook — POST /api/v1/webhooks/cloudflare-stream
+Cloudflare Webhook Payload (sent by Cloudflare, not the frontend)
+{
+"uid": "ea95132c15732412d22c1476fa83f27a",
+"status": {
+"state": "ready",
+"pctComplete": "100.000000",
+"errorReasonCode": "",
+"errorReasonText": ""
+},
+"meta": {
+"name": "vid_7k3m8n2p"
+},
+"playback": {
+"hls": "https://customer-xyz.cloudflarestream.com/ea95132c15732412d22c1476fa83f27a/manifest/video.m3u8",
+"dash": "https://customer-xyz.cloudflarestream.com/ea95132c15732412d22c1476fa83f27a/manifest/video.mpd"
+},
+"thumbnail": "https://customer-xyz.cloudflarestream.com/ea95132c15732412d22c1476fa83f27a/thumbnails/thumbnail.jpg",
+"duration": 47
+}
+The backend webhook handler must: (1) verify the Cloudflare-Signature header to confirm the webhook is genuine, (2) look up the video record by cloudflare_uid, (3) update status to ready, save playback_url, thumbnail_url, and duration, (4) trigger a push notification to the creator that their video is live.
