@@ -23,13 +23,19 @@
       "predictiveBackGestureEnabled": false,
       "permissions": [
         "android.permission.RECORD_AUDIO",
-        "android.permission.RECORD_AUDIO"
-      ]
+        "android.permission.CAMERA"
+      ],
+      "package": "com.tamkko.app"
     },
     "web": {
       "output": "static",
       "favicon": "./assets/images/favicon.png",
       "bundler": "metro"
+    },
+    "notification": {
+      "icon": "./assets/images/android-icon-monochrome.png",
+      "color": "#0A7EA4",
+      "iosDisplayInForeground": true
     },
     "plugins": [
       "expo-router",
@@ -53,13 +59,32 @@
           "cameraPermission": "Allow TAMKKO to use the camera to capture your ID and selfie."
         }
       ],
-      "expo-secure-store"
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow TAMKKO to use your camera so you can record videos.",
+          "microphonePermission": "Allow TAMKKO to use your microphone while recording videos."
+        }
+      ],
+      "expo-secure-store",
+      "expo-video",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/android-icon-monochrome.png",
+          "color": "#0A7EA4"
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
     },
     "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "42478e86-3d60-4e76-8d58-76624559f24d"
+      }
     },
     "runtimeVersion": {
       "policy": "appVersion"
