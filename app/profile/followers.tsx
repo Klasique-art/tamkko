@@ -1,7 +1,199 @@
-﻿import React from 'react';
+import { Ionicons } from '@expo/vector-icons';
+import { FlashList } from '@shopify/flash-list';
+import { Href, router } from 'expo-router';
+import React from 'react';
+import { ActivityIndicator, Image, Pressable, TextInput, View } from 'react-native';
 
-import { ScreenScaffold } from '@/components/scaffold';
+import AppText from '@/components/ui/AppText';
+import Screen from '@/components/ui/Screen';
+import { useColors } from '@/config/colors';
+import { MockFollower } from '@/data/mock/followers';
+import { followersService } from '@/lib/services/followersService';
+
+const compact = (value: number) =>
+    new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(value);
+
+const formatFollowedSince = (isoDate: string) =>
+    new Date(isoDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
 export default function FollowersScreen() {
-    return <ScreenScaffold title="Followers" subtitle="Follower relationship list and quick actions." />;
+    const colors = useColors();
+    const [query, setQuery] = React.useState('');
+    const [debouncedQuery, setDebouncedQuery] = React.useState('');
+    const [loading, setLoading] = React.useState(true);
+    const [loadingMore, setLoadingMore] = React.useState(false);
+    const [followers, setFollowers] = React.useState<MockFollower[]>([]);
+    const [nextCursor, setNextCursor] = React.useState<string | null>(null);
+    const [hasMore, setHasMore] = React.useState(false);
+    const [totalCount, setTotalCount] = React.useState(0);
+
+    React.useEffect(() => {
+        const timeoutId = setTimeout(() => {
+            setDebouncedQuery(query.trim());
+        }, 180);
+        return () => clearTimeout(timeoutId);
+    }, [query]);
+
+    const loadFirstPage = React.useCallback(async () => {
+        setLoading(true);
+        const page = await followersService.getMyFollowersPage({
+            cursor: null,
+            limit: 24,
+            query: debouncedQuery,
+        });
+        setFollowers(page.items);
+        setNextCursor(page.nextCursor);
+        setHasMore(page.hasMore);
+        setTotalCount(page.totalCount);
+        setLoading(false);
+    }, [debouncedQuery]);
+
+    React.useEffect(() => {
+        void loadFirstPage();
+    }, [loadFirstPage]);
+
+    const loadMore = React.useCallback(async () => {
+        if (loading || loadingMore || !hasMore || !nextCursor) return;
+        setLoadingMore(true);
+        const page = await followersService.getMyFollowersPage({
+            cursor: nextCursor,
+            limit: 24,
+            query: debouncedQuery,
+        });
+        setFollowers((current) => [...current, ...page.items]);
+        setNextCursor(page.nextCursor);
+        setHasMore(page.hasMore);
+        setLoadingMore(false);
+    }, [debouncedQuery, hasMore, loading, loadingMore, nextCursor]);
+
+    const openCreator = React.useCallback((username: string) => {
+        const cleaned = username.replace(/^@/, '').trim();
+        router.push(`/video/creator/${encodeURIComponent(cleaned)}` as Href);
+    }, []);
+
+    const FollowerItem = React.useMemo(
+        () =>
+            React.memo(function FollowerItemRow({ item }: { item: MockFollower }) {
+                return (
+                    <Pressable
+                        onPress={() => openCreator(item.username)}
+                        className="mb-2 flex-row items-center rounded-2xl border px-3 py-3"
+                        style={{ borderColor: colors.border, backgroundColor: colors.backgroundAlt }}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Open ${item.username} profile`}
+                        accessibilityHint={`Followed since ${formatFollowedSince(item.followedSince)}`}
+                    >
+                        <Image
+                            source={{ uri: item.avatarUrl }}
+                            style={{ width: 52, height: 52, borderRadius: 26, backgroundColor: colors.border }}
+                            resizeMode="cover"
+                        />
+
+                        <View className="ml-3 flex-1">
+                            <View className="flex-row items-center">
+                                <AppText className="text-sm font-bold" color={colors.textPrimary}>
+                                    {item.username}
+                                </AppText>
+                                {item.isVerified ? (
+                                    <Ionicons name="checkmark-circle" size={14} color={colors.info} style={{ marginLeft: 5 }} />
+                                ) : null}
+                            </View>
+                            <AppText className="text-xs" color={colors.textSecondary} numberOfLines={1}>
+                                {item.displayName} · {compact(item.followersCount)} followers
+                            </AppText>
+                            <AppText className="mt-1 text-xs" color={colors.textSecondary} numberOfLines={1}>
+                                {item.bio}
+                            </AppText>
+                        </View>
+
+                        <View className="items-end">
+                            <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
+                            <AppText className="mt-1 text-[10px]" color={colors.textSecondary}>
+                                {formatFollowedSince(item.followedSince)}
+                            </AppText>
+                        </View>
+                    </Pressable>
+                );
+            }),
+        [colors.backgroundAlt, colors.border, colors.info, colors.textPrimary, colors.textSecondary, openCreator]
+    );
+
+    return (
+        <Screen title="Followers" className="pt-2">
+            <View
+                className="rounded-2xl border px-3 py-2"
+                style={{ borderColor: colors.border, backgroundColor: colors.backgroundAlt }}
+            >
+                <View className="flex-row items-center">
+                    <Ionicons name="search" size={16} color={colors.textSecondary} />
+                    <TextInput
+                        value={query}
+                        onChangeText={setQuery}
+                        placeholder="Search followers"
+                        placeholderTextColor={colors.textSecondary}
+                        style={{
+                            flex: 1,
+                            marginLeft: 8,
+                            color: colors.textPrimary,
+                            fontSize: 15,
+                            fontWeight: '600',
+                            paddingVertical: 6,
+                        }}
+                        accessibilityLabel="Search followers"
+                    />
+                </View>
+            </View>
+
+            <View className="mt-3 rounded-2xl border p-3" style={{ borderColor: colors.border, backgroundColor: colors.backgroundAlt }}>
+                <AppText className="text-sm font-semibold" color={colors.textPrimary}>
+                    Total Followers
+                </AppText>
+                <AppText className="mt-1 text-2xl font-extrabold" color={colors.textPrimary}>
+                    {compact(totalCount)}
+                </AppText>
+            </View>
+
+            <FlashList
+                data={followers}
+                keyExtractor={(item) => item.id}
+                contentContainerStyle={{ paddingTop: 12, paddingBottom: 120 }}
+                renderItem={({ item }) => <FollowerItem item={item} />}
+                onEndReached={loadMore}
+                onEndReachedThreshold={0.65}
+                removeClippedSubviews
+                ListEmptyComponent={
+                    !loading ? (
+                        <View className="items-center rounded-2xl border px-4 py-7" style={{ borderColor: colors.border, backgroundColor: colors.backgroundAlt }}>
+                            <View
+                                className="h-11 w-11 items-center justify-center rounded-full"
+                                style={{ backgroundColor: colors.background }}
+                            >
+                                <Ionicons name="people-outline" size={22} color={colors.textSecondary} />
+                            </View>
+                            <AppText className="mt-3 text-sm font-semibold" color={colors.textPrimary}>
+                                No Followers Yet
+                            </AppText>
+                            <AppText className="mt-1 text-center text-sm leading-5" color={colors.textSecondary}>
+                                Once people follow your profile, they will appear here.
+                            </AppText>
+                        </View>
+                    ) : (
+                        <View className="items-center rounded-2xl border p-5" style={{ borderColor: colors.border, backgroundColor: colors.backgroundAlt }}>
+                            <ActivityIndicator color={colors.primary} />
+                            <AppText className="mt-2 text-sm" color={colors.textSecondary}>
+                                Loading followers...
+                            </AppText>
+                        </View>
+                    )
+                }
+                ListFooterComponent={
+                    loadingMore ? (
+                        <View className="py-2">
+                            <ActivityIndicator color={colors.primary} />
+                        </View>
+                    ) : null
+                }
+            />
+        </Screen>
+    );
 }

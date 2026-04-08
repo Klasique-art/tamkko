@@ -42,6 +42,9 @@ export default function ProfileTab() {
     const openSettings = () => {
         router.push('/profile/settings' as Href);
     };
+    const openAnalytics = () => {
+        router.push('/profile/analytics' as Href);
+    };
 
     const handleLogoutConfirmed = async () => {
         setLogoutConfirmVisible(false);
@@ -190,6 +193,25 @@ export default function ProfileTab() {
                         </View>
                         <AppText className="mt-1 text-xs leading-5" color={colors.textSecondary}>
                             Account settings, appearance, security, and sessions.
+                        </AppText>
+                    </Pressable>
+
+                    <Pressable
+                        onPress={openAnalytics}
+                        className="rounded-2xl border p-4"
+                        style={{ borderColor: colors.border, backgroundColor: colors.backgroundAlt }}
+                        accessibilityRole="button"
+                        accessibilityLabel="Open analytics"
+                        accessibilityHint="View creator analytics and performance trends"
+                    >
+                        <View className="flex-row items-center justify-between">
+                            <AppText className="text-base font-semibold" color={colors.textPrimary}>
+                                Analytics
+                            </AppText>
+                            <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
+                        </View>
+                        <AppText className="mt-1 text-xs leading-5" color={colors.textSecondary}>
+                            View views, engagement, watch-time, and earnings insights.
                         </AppText>
                     </Pressable>
                 </View>

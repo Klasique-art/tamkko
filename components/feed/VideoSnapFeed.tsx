@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useNavigation } from '@react-navigation/native';
+import { useIsFocused, useNavigation } from '@react-navigation/native';
 import { useRouter } from 'expo-router';
 import React from 'react';
 import { FlatList, ListRenderItemInfo, Pressable, Share, View } from 'react-native';
@@ -11,7 +11,7 @@ import VideoFeedSlide from '@/components/feed/VideoFeedSlide';
 import { AppBottomSheetRef } from '@/components/ui/AppBottomSheet';
 import AppText from '@/components/ui/AppText';
 import Nav from '@/components/ui/Nav';
-import { getFollowedCreators, toggleFollowedCreator } from '@/data/mock/following';
+import { getFollowedCreators, normalizeCreatorHandle, toggleFollowedCreator } from '@/data/mock/following';
 import { SimulatedTipPayload } from '@/types/tip.types';
 import { VideoItem } from '@/types/video.types';
 
@@ -37,6 +37,7 @@ export default function VideoSnapFeed({
     const [tipVideo, setTipVideo] = React.useState<VideoItem | null>(null);
     const [commentVideo, setCommentVideo] = React.useState<VideoItem | null>(null);
     const navigation = useNavigation();
+    const isScreenFocused = useIsFocused();
     const router = useRouter();
     const insets = useSafeAreaInsets();
     const tipSheetRef = React.useRef<AppBottomSheetRef>(null);
@@ -81,9 +82,10 @@ export default function VideoSnapFeed({
     const toggleFollowCreator = React.useCallback((creatorHandle: string) => {
         setFollowedCreators((current) => {
             const next = new Set(current);
+            const normalized = normalizeCreatorHandle(creatorHandle);
             const isNowFollowed = toggleFollowedCreator(creatorHandle);
-            if (isNowFollowed) next.add(creatorHandle);
-            else next.delete(creatorHandle);
+            if (isNowFollowed) next.add(normalized);
+            else next.delete(normalized);
             return next;
         });
     }, []);
@@ -114,17 +116,28 @@ export default function VideoSnapFeed({
                 item={item}
                 height={pageHeight}
                 index={index}
-                isActive={index === activeIndex}
+                isActive={isScreenFocused && index === activeIndex}
                 onCreatorPress={onCreatorPress}
                 onTipPress={() => openTipSheet(item)}
                 onCommentPress={() => openCommentSheet(item)}
                 onSharePress={() => handleShare(item)}
-                isFollowingCreator={followedCreators.has(item.creatorUsername)}
+                isFollowingCreator={followedCreators.has(normalizeCreatorHandle(item.creatorUsername))}
                 onFollowCreator={toggleFollowCreator}
                 onToggleLike={() => toggleLike(item.id)}
             />
         ),
-        [activeIndex, followedCreators, handleShare, onCreatorPress, openCommentSheet, openTipSheet, pageHeight, toggleFollowCreator, toggleLike]
+        [
+            activeIndex,
+            followedCreators,
+            handleShare,
+            isScreenFocused,
+            onCreatorPress,
+            openCommentSheet,
+            openTipSheet,
+            pageHeight,
+            toggleFollowCreator,
+            toggleLike,
+        ]
     );
 
     const keyExtractor = React.useCallback((item: VideoItem) => item.id, []);

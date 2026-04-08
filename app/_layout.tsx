@@ -29,6 +29,7 @@ export default function RootLayout() {
                                     <Stack.Screen name="referral" />
                                     <Stack.Screen name="notifications" />
                                     <Stack.Screen name="profile" />
+                                    <Stack.Screen name="inbox" />
                                     <Stack.Screen name="terms" />
                                     <Stack.Screen name="verification" />
                                 </Stack>

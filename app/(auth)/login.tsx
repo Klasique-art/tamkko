@@ -62,7 +62,6 @@ export default function LoginScreen() {
                     label="Password"
                     placeholder="Enter your password"
                     type="password"
-                    required
                     icon="eye"
                     iconAria="Toggle password visibility"
                 />

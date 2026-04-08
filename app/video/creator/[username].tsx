@@ -13,8 +13,10 @@ import AppText from '@/components/ui/AppText';
 import Screen from '@/components/ui/Screen';
 import { useColors } from '@/config/colors';
 import { useToast } from '@/context/ToastContext';
+import { isCreatorFollowed, normalizeCreatorHandle, toggleFollowedCreator } from '@/data/mock/following';
 import { MOCK_TEST_VIDEO_SOURCE } from '@/data/mock/videos';
 import { creatorProfileService } from '@/lib/services/creatorProfileService';
+import { useInboxStore } from '@/lib/stores/inboxStore';
 import { delay } from '@/lib/utils/delay';
 import { CreatorProfileScreenData, CreatorProfileVideo } from '@/types/creator.types';
 
@@ -75,6 +77,8 @@ export default function CreatorProfileScreen() {
     const [realDurationSeconds, setRealDurationSeconds] = useState<number | null>(null);
     const followScale = useRef(new Animated.Value(1)).current;
     const shareScale = useRef(new Animated.Value(1)).current;
+    const messageScale = useRef(new Animated.Value(1)).current;
+    const ensureConversation = useInboxStore((state) => state.ensureConversation);
     const durationProbePlayer = useVideoPlayer(MOCK_TEST_VIDEO_SOURCE, (videoPlayer) => {
         videoPlayer.muted = true;
         videoPlayer.pause();
@@ -90,6 +94,10 @@ export default function CreatorProfileScreen() {
                 setScreenData(data);
                 setActiveTab('free');
                 setViewerHasAccess(Boolean(data?.profile.viewerHasActiveSubscription));
+                if (data?.profile.username) {
+                    const handle = normalizeCreatorHandle(data.profile.username);
+                    setIsFollowing(isCreatorFollowed(handle));
+                }
                 setLoading(false);
             }
         };
@@ -181,7 +189,8 @@ export default function CreatorProfileScreen() {
     };
 
     const handleFollowPress = () => {
-        const next = !isFollowing;
+        const creatorHandle = normalizeCreatorHandle(profile?.username ?? '');
+        const next = creatorHandle.trim().length > 1 ? toggleFollowedCreator(creatorHandle) : !isFollowing;
         setIsFollowing(next);
         void Haptics.notificationAsync(
             next ? Haptics.NotificationFeedbackType.Success : Haptics.NotificationFeedbackType.Warning
@@ -209,6 +218,18 @@ export default function CreatorProfileScreen() {
             showToast('Unable to open share options right now', { variant: 'error', duration: 2600 });
             announce('Unable to open share options');
         }
+    };
+
+    const handleMessagePress = () => {
+        if (!profile) return;
+        void Haptics.selectionAsync();
+        const conversationId = ensureConversation({
+            creatorUsername: profile.username,
+            creatorDisplayName: profile.displayName,
+            creatorAvatarUrl: profile.avatarUrl,
+            isVerified: ['klasique', 'ama.creator'].includes(profile.username),
+        });
+        router.push(`/inbox/chat/${encodeURIComponent(conversationId)}` as Href);
     };
 
     const simulateSubscriptionPayment = async () => {
@@ -399,6 +420,23 @@ export default function CreatorProfileScreen() {
                                 >
                                     <AppText className="text-center text-sm font-semibold" color={colors.background}>
                                         {isFollowing ? 'Following' : 'Follow'}
+                                    </AppText>
+                                </Pressable>
+                            </Animated.View>
+
+                            <Animated.View className="ml-2 flex-1" style={{ transform: [{ scale: messageScale }] }}>
+                                <Pressable
+                                    onPress={handleMessagePress}
+                                    onPressIn={() => animateButton(messageScale, 0.97)}
+                                    onPressOut={() => animateButton(messageScale, 1)}
+                                    className="rounded-xl border py-3"
+                                    style={{ borderColor: colors.border, backgroundColor: colors.backgroundAlt }}
+                                    accessibilityRole="button"
+                                    accessibilityLabel="Message creator"
+                                    accessibilityHint="Open direct chat with this creator"
+                                >
+                                    <AppText className="text-center text-sm font-semibold" color={colors.textPrimary}>
+                                        Message
                                     </AppText>
                                 </Pressable>
                             </Animated.View>

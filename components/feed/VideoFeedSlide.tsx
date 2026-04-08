@@ -36,6 +36,18 @@ function VideoFeedSlide({
     onFollowCreator,
     onToggleLike,
 }: VideoFeedSlideProps) {
+    const safelyPause = React.useCallback((target: ReturnType<typeof useVideoPlayer>) => {
+        try {
+            target.pause();
+        } catch {}
+    }, []);
+
+    const safelyPlay = React.useCallback((target: ReturnType<typeof useVideoPlayer>) => {
+        try {
+            target.play();
+        } catch {}
+    }, []);
+
     const lastTapRef = React.useRef(0);
     const singleTapTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
     const burstScale = React.useRef(new Animated.Value(0.3)).current;
@@ -57,16 +69,18 @@ function VideoFeedSlide({
 
     React.useEffect(() => {
         if (!isActive) {
-            player.pause();
+            player.muted = true;
+            safelyPause(player);
             return;
         }
 
+        player.muted = false;
         if (isPlaying) {
-            player.play();
+            safelyPlay(player);
         } else {
-            player.pause();
+            safelyPause(player);
         }
-    }, [isActive, isPlaying, player]);
+    }, [isActive, isPlaying, player, safelyPause, safelyPlay]);
 
     const playLikeBurst = React.useCallback(() => {
         burstScale.setValue(0.35);
@@ -133,16 +147,16 @@ function VideoFeedSlide({
         if (!isActive) return;
         const nextIsPlaying = !isPlaying;
         if (nextIsPlaying) {
-            player.play();
+            safelyPlay(player);
             AccessibilityInfo.announceForAccessibility('Video playing');
             playPlaybackFeedback('play');
         } else {
-            player.pause();
+            safelyPause(player);
             AccessibilityInfo.announceForAccessibility('Video paused');
             playPlaybackFeedback('pause');
         }
         setIsPlaying(nextIsPlaying);
-    }, [isActive, isPlaying, playPlaybackFeedback, player]);
+    }, [isActive, isPlaying, playPlaybackFeedback, player, safelyPause, safelyPlay]);
 
     React.useEffect(() => {
         return () => {
@@ -245,6 +259,7 @@ export default memo(VideoFeedSlide, (prev, next) =>
     prev.height === next.height &&
     prev.index === next.index &&
     prev.isActive === next.isActive &&
+    prev.isFollowingCreator === next.isFollowingCreator &&
     prev.item.id === next.item.id &&
     prev.item.isLiked === next.item.isLiked &&
     prev.item.likesCount === next.item.likesCount &&

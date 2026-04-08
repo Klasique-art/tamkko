@@ -14,4 +14,8 @@ export { roomRealtimeService } from './roomRealtimeService';
 export { mockRoomCommunityService } from './mockRoomCommunityService';
 export { uploadService } from './uploadService';
 export { creatorProfileService } from './creatorProfileService';
+export { creatorAnalyticsService } from './creatorAnalyticsService';
+export { followersService } from './followersService';
+export { followingService } from './followingService';
+export { subscribersService } from './subscribersService';
 

@@ -9,3 +9,5 @@ export * from './videos';
 export * from './wallet';
 export * from './tips';
 export * from './following';
+export * from './followers';
+export * from './subscribers';

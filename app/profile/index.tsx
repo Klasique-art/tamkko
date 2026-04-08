@@ -55,6 +55,7 @@ export default function ProfileWorkspaceScreen() {
                         { label: 'Edit Profile', href: '/profile/edit' },
                         { label: 'Followers', href: '/profile/followers' },
                         { label: 'Following', href: '/profile/following' },
+                        { label: 'Subscribers', href: '/profile/subscribers' },
                     ].map((item) => (
                         <Pressable
                             key={item.label}

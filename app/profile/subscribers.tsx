@@ -7,21 +7,28 @@ import { ActivityIndicator, Image, Pressable, TextInput, View } from 'react-nati
 import AppText from '@/components/ui/AppText';
 import Screen from '@/components/ui/Screen';
 import { useColors } from '@/config/colors';
-import { FollowingListItem, followingService } from '@/lib/services/followingService';
+import { MockSubscriber } from '@/data/mock/subscribers';
+import { subscribersService } from '@/lib/services/subscribersService';
 
 const compact = (value: number) =>
     new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(value);
 
-const formatFollowedSince = (isoDate: string) =>
+const formatDate = (isoDate: string) =>
     new Date(isoDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
-export default function FollowingScreen() {
+const statusMeta: Record<MockSubscriber['status'], { label: string; bg: string }> = {
+    active: { label: 'Active', bg: 'rgba(26,118,13,0.18)' },
+    cancelled: { label: 'Cancelled', bg: 'rgba(248,183,53,0.24)' },
+    expired: { label: 'Expired', bg: 'rgba(120,120,120,0.24)' },
+};
+
+export default function SubscribersScreen() {
     const colors = useColors();
     const [query, setQuery] = React.useState('');
     const [debouncedQuery, setDebouncedQuery] = React.useState('');
     const [loading, setLoading] = React.useState(true);
     const [loadingMore, setLoadingMore] = React.useState(false);
-    const [following, setFollowing] = React.useState<FollowingListItem[]>([]);
+    const [subscribers, setSubscribers] = React.useState<MockSubscriber[]>([]);
     const [nextCursor, setNextCursor] = React.useState<string | null>(null);
     const [hasMore, setHasMore] = React.useState(false);
     const [totalCount, setTotalCount] = React.useState(0);
@@ -35,12 +42,12 @@ export default function FollowingScreen() {
 
     const loadFirstPage = React.useCallback(async () => {
         setLoading(true);
-        const page = await followingService.getMyFollowingPage({
+        const page = await subscribersService.getMySubscribersPage({
             cursor: null,
             limit: 24,
             query: debouncedQuery,
         });
-        setFollowing(page.items);
+        setSubscribers(page.items);
         setNextCursor(page.nextCursor);
         setHasMore(page.hasMore);
         setTotalCount(page.totalCount);
@@ -54,12 +61,12 @@ export default function FollowingScreen() {
     const loadMore = React.useCallback(async () => {
         if (loading || loadingMore || !hasMore || !nextCursor) return;
         setLoadingMore(true);
-        const page = await followingService.getMyFollowingPage({
+        const page = await subscribersService.getMySubscribersPage({
             cursor: nextCursor,
             limit: 24,
             query: debouncedQuery,
         });
-        setFollowing((current) => [...current, ...page.items]);
+        setSubscribers((current) => [...current, ...page.items]);
         setNextCursor(page.nextCursor);
         setHasMore(page.hasMore);
         setLoadingMore(false);
@@ -70,9 +77,10 @@ export default function FollowingScreen() {
         router.push(`/video/creator/${encodeURIComponent(cleaned)}` as Href);
     }, []);
 
-    const FollowingItem = React.useMemo(
+    const SubscriberItem = React.useMemo(
         () =>
-            React.memo(function FollowingItemRow({ item }: { item: FollowingListItem }) {
+            React.memo(function SubscriberItemRow({ item }: { item: MockSubscriber }) {
+                const meta = statusMeta[item.status];
                 return (
                     <Pressable
                         onPress={() => openCreator(item.username)}
@@ -80,7 +88,7 @@ export default function FollowingScreen() {
                         style={{ borderColor: colors.border, backgroundColor: colors.backgroundAlt }}
                         accessibilityRole="button"
                         accessibilityLabel={`Open ${item.username} profile`}
-                        accessibilityHint={`Followed since ${formatFollowedSince(item.followedSince)}`}
+                        accessibilityHint={`Subscribed since ${formatDate(item.subscribedSince)}`}
                     >
                         <Image
                             source={{ uri: item.avatarUrl }}
@@ -100,17 +108,19 @@ export default function FollowingScreen() {
                             <AppText className="text-xs" color={colors.textSecondary} numberOfLines={1}>
                                 {item.displayName} · {compact(item.followersCount)} followers
                             </AppText>
-                            <AppText className="mt-1 text-xs" color={colors.textSecondary} numberOfLines={1}>
-                                {item.bio}
-                            </AppText>
+                            <View className="mt-1 flex-row items-center">
+                                <View className="rounded-full px-2 py-0.5" style={{ backgroundColor: meta.bg }}>
+                                    <AppText className="text-[10px] font-semibold" color={colors.textPrimary}>
+                                        {meta.label}
+                                    </AppText>
+                                </View>
+                                <AppText className="ml-2 text-[10px]" color={colors.textSecondary}>
+                                    Since {formatDate(item.subscribedSince)}
+                                </AppText>
+                            </View>
                         </View>
 
-                        <View className="items-end">
-                            <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
-                            <AppText className="mt-1 text-[10px]" color={colors.textSecondary}>
-                                {formatFollowedSince(item.followedSince)}
-                            </AppText>
-                        </View>
+                        <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
                     </Pressable>
                 );
             }),
@@ -118,7 +128,7 @@ export default function FollowingScreen() {
     );
 
     return (
-        <Screen title="Following" className="pt-2">
+        <Screen title="Subscribers" className="pt-2">
             <View
                 className="rounded-2xl border px-3 py-2"
                 style={{ borderColor: colors.border, backgroundColor: colors.backgroundAlt }}
@@ -128,7 +138,7 @@ export default function FollowingScreen() {
                     <TextInput
                         value={query}
                         onChangeText={setQuery}
-                        placeholder="Search following"
+                        placeholder="Search subscribers"
                         placeholderTextColor={colors.textSecondary}
                         style={{
                             flex: 1,
@@ -138,14 +148,14 @@ export default function FollowingScreen() {
                             fontWeight: '600',
                             paddingVertical: 6,
                         }}
-                        accessibilityLabel="Search following"
+                        accessibilityLabel="Search subscribers"
                     />
                 </View>
             </View>
 
             <View className="mt-3 rounded-2xl border p-3" style={{ borderColor: colors.border, backgroundColor: colors.backgroundAlt }}>
                 <AppText className="text-sm font-semibold" color={colors.textPrimary}>
-                    Total Following
+                    Subscribers (All Time)
                 </AppText>
                 <AppText className="mt-1 text-2xl font-extrabold" color={colors.textPrimary}>
                     {compact(totalCount)}
@@ -153,10 +163,10 @@ export default function FollowingScreen() {
             </View>
 
             <FlashList
-                data={following}
+                data={subscribers}
                 keyExtractor={(item) => item.id}
                 contentContainerStyle={{ paddingTop: 12, paddingBottom: 120 }}
-                renderItem={({ item }) => <FollowingItem item={item} />}
+                renderItem={({ item }) => <SubscriberItem item={item} />}
                 onEndReached={loadMore}
                 onEndReachedThreshold={0.65}
                 removeClippedSubviews
@@ -167,20 +177,20 @@ export default function FollowingScreen() {
                                 className="h-11 w-11 items-center justify-center rounded-full"
                                 style={{ backgroundColor: colors.background }}
                             >
-                                <Ionicons name="person-add-outline" size={22} color={colors.textSecondary} />
+                                <Ionicons name="diamond-outline" size={22} color={colors.textSecondary} />
                             </View>
                             <AppText className="mt-3 text-sm font-semibold" color={colors.textPrimary}>
-                                Not Following Anyone Yet
+                                No Subscribers Yet
                             </AppText>
                             <AppText className="mt-1 text-center text-sm leading-5" color={colors.textSecondary}>
-                                Follow creators to see them listed here.
+                                Subscribers who join your premium access will appear here.
                             </AppText>
                         </View>
                     ) : (
                         <View className="items-center rounded-2xl border p-5" style={{ borderColor: colors.border, backgroundColor: colors.backgroundAlt }}>
                             <ActivityIndicator color={colors.primary} />
                             <AppText className="mt-2 text-sm" color={colors.textSecondary}>
-                                Loading following...
+                                Loading subscribers...
                             </AppText>
                         </View>
                     )
