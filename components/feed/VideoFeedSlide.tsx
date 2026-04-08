@@ -56,19 +56,16 @@ function VideoFeedSlide({
     const playbackOpacity = React.useRef(new Animated.Value(0)).current;
     const [playbackIcon, setPlaybackIcon] = React.useState<'play' | 'pause'>('pause');
     const [isPlaying, setIsPlaying] = React.useState(true);
+    const shouldMountVideo = isActive;
     const player = useVideoPlayer(item.videoSource ?? MOCK_TEST_VIDEO_SOURCE, (videoPlayer) => {
         videoPlayer.loop = true;
-        videoPlayer.muted = false;
+        videoPlayer.muted = true;
         videoPlayer.volume = 1;
-        if (isActive) {
-            videoPlayer.play();
-        } else {
-            videoPlayer.pause();
-        }
+        videoPlayer.pause();
     });
 
     React.useEffect(() => {
-        if (!isActive) {
+        if (!isActive || !shouldMountVideo) {
             player.muted = true;
             safelyPause(player);
             return;
@@ -80,7 +77,7 @@ function VideoFeedSlide({
         } else {
             safelyPause(player);
         }
-    }, [isActive, isPlaying, player, safelyPause, safelyPlay]);
+    }, [isActive, isPlaying, player, safelyPause, safelyPlay, shouldMountVideo]);
 
     const playLikeBurst = React.useCallback(() => {
         burstScale.setValue(0.35);
@@ -192,13 +189,26 @@ function VideoFeedSlide({
             accessibilityHint="Single tap to play or pause. Double tap quickly to like."
         >
             <View style={{ height, backgroundColor: index % 2 === 0 ? '#0a0a0a' : '#111111' }}>
-                <VideoView
-                    player={player}
-                    style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}
-                    contentFit="cover"
-                    nativeControls={false}
-                    fullscreenOptions={{ enable: false }}
-                />
+                {shouldMountVideo ? (
+                    <VideoView
+                        player={player}
+                        style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}
+                        contentFit="cover"
+                        nativeControls={false}
+                        fullscreenOptions={{ enable: false }}
+                    />
+                ) : (
+                    <View
+                        style={{
+                            position: 'absolute',
+                            top: 0,
+                            right: 0,
+                            bottom: 0,
+                            left: 0,
+                            backgroundColor: '#0B0B0B',
+                        }}
+                    />
+                )}
 
                 <View className="absolute inset-0" style={{ backgroundColor: 'rgba(0,0,0,0.18)' }} />
 

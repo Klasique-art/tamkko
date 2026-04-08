@@ -237,9 +237,9 @@ export default function VideoSnapFeed({
                     showsVerticalScrollIndicator={false}
                     bounces={false}
                     removeClippedSubviews
-                    initialNumToRender={3}
-                    maxToRenderPerBatch={3}
-                    windowSize={3}
+                    initialNumToRender={1}
+                    maxToRenderPerBatch={1}
+                    windowSize={2}
                     snapToInterval={pageHeight}
                     snapToAlignment="start"
                     decelerationRate="fast"

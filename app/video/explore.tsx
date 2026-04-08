@@ -1,7 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { FlashList } from '@shopify/flash-list';
 import { Href, router } from 'expo-router';
-import { useVideoPlayer, VideoView } from 'expo-video';
 import React, { useMemo, useState } from 'react';
 import { Animated, Pressable, View, useWindowDimensions } from 'react-native';
 
@@ -10,7 +9,6 @@ import Screen from '@/components/ui/Screen';
 import { useColors } from '@/config/colors';
 import { getFollowedCreators } from '@/data/mock/following';
 import { mockVideos } from '@/data/mock';
-import { MOCK_TEST_VIDEO_SOURCE } from '@/data/mock/videos';
 import { VideoItem } from '@/types/video.types';
 
 const compact = (value: number) =>
@@ -19,13 +17,7 @@ const compact = (value: number) =>
 const sections = ['Fresh Creators', 'Campus Trends', 'Music Drops'];
 
 const ExploreVideoPreview = React.memo(function ExploreVideoPreview({ aspectRatio }: { aspectRatio: number }) {
-    const [isReady, setIsReady] = useState(false);
     const pulseOpacity = React.useRef(new Animated.Value(0.45)).current;
-    const player = useVideoPlayer(MOCK_TEST_VIDEO_SOURCE, (videoPlayer) => {
-        videoPlayer.pause();
-        videoPlayer.muted = true;
-        videoPlayer.currentTime = 0;
-    });
 
     React.useEffect(() => {
         const pulseLoop = Animated.loop(
@@ -48,53 +40,35 @@ const ExploreVideoPreview = React.memo(function ExploreVideoPreview({ aspectRati
         };
     }, [pulseOpacity]);
 
-    React.useEffect(() => {
-        const sourceSubscription = player.addListener('sourceLoad', () => {
-            setIsReady(true);
-        });
-        return () => {
-            sourceSubscription.remove();
-        };
-    }, [player]);
-
     return (
-        <View style={{ aspectRatio }}>
-            <VideoView
-                player={player}
-                style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}
-                contentFit="cover"
-                nativeControls={false}
-                fullscreenOptions={{ enable: false }}
-            />
-            {!isReady ? (
-                <Animated.View
-                    pointerEvents="none"
+        <View style={{ aspectRatio, backgroundColor: '#111111' }}>
+            <Animated.View
+                pointerEvents="none"
+                style={{
+                    position: 'absolute',
+                    top: 0,
+                    right: 0,
+                    bottom: 0,
+                    left: 0,
+                    backgroundColor: '#171717',
+                    opacity: pulseOpacity,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                }}
+            >
+                <View
                     style={{
-                        position: 'absolute',
-                        top: 0,
-                        right: 0,
-                        bottom: 0,
-                        left: 0,
-                        backgroundColor: '#171717',
-                        opacity: pulseOpacity,
+                        height: 44,
+                        width: 44,
+                        borderRadius: 22,
+                        backgroundColor: 'rgba(255,255,255,0.2)',
                         alignItems: 'center',
                         justifyContent: 'center',
                     }}
                 >
-                    <View
-                        style={{
-                            height: 44,
-                            width: 44,
-                            borderRadius: 22,
-                            backgroundColor: 'rgba(255,255,255,0.2)',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                        }}
-                    >
-                        <Ionicons name="play" size={20} color="#FFFFFF" />
-                    </View>
-                </Animated.View>
-            ) : null}
+                    <Ionicons name="play" size={20} color="#FFFFFF" />
+                </View>
+            </Animated.View>
         </View>
     );
 });

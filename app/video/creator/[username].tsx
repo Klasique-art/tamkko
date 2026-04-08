@@ -3,7 +3,7 @@ import { FlashList } from '@shopify/flash-list';
 import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Href, router, useLocalSearchParams } from 'expo-router';
-import { useVideoPlayer, VideoView } from 'expo-video';
+import { useVideoPlayer } from 'expo-video';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AccessibilityInfo, Animated, Image, Pressable, Share, View, useWindowDimensions } from 'react-native';
 
@@ -38,20 +38,8 @@ const buildShareText = (username: string) =>
     `Check out @${username} on Tamkko. Subscribe to unlock all premium drops.`;
 
 const CreatorGridVideo = React.memo(function CreatorGridVideo({ height }: { height: number }) {
-    const player = useVideoPlayer(MOCK_TEST_VIDEO_SOURCE, (videoPlayer) => {
-        videoPlayer.muted = true;
-        videoPlayer.pause();
-        videoPlayer.currentTime = 0;
-    });
-
     return (
-        <VideoView
-            player={player}
-            style={{ width: '100%', height }}
-            contentFit="cover"
-            nativeControls={false}
-            fullscreenOptions={{ enable: false }}
-        />
+        <View style={{ width: '100%', height, backgroundColor: '#111111' }} />
     );
 });
 
