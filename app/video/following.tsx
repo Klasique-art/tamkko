@@ -8,17 +8,18 @@ import AppText from '@/components/ui/AppText';
 import Screen from '@/components/ui/Screen';
 import { useColors } from '@/config/colors';
 import { getFollowedCreators } from '@/data/mock/following';
-import { mockVideos } from '@/data/mock';
+import { useVideoFeedStore } from '@/lib/stores/videoFeedStore';
 
 const sanitizeHandle = (handle: string) => handle.replace(/^@/, '').trim();
 
 export default function FollowingFeedScreen() {
     const colors = useColors();
     const followingCreators = useMemo(() => getFollowedCreators(), []);
+    const videos = useVideoFeedStore((state) => state.videos);
 
     const followingFeedItems = useMemo(
-        () => mockVideos.filter((video) => followingCreators.has(video.creatorUsername)),
-        [followingCreators]
+        () => videos.filter((video) => followingCreators.has(video.creatorUsername)),
+        [followingCreators, videos]
     );
 
     useFocusEffect(

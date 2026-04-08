@@ -1,6 +1,6 @@
 import { mockCreatorProfiles } from '@/data/mock/creators';
 import { mockSearchRecentQueries, mockSearchTrendingHashtags } from '@/data/mock/search';
-import { mockVideos } from '@/data/mock/videos';
+import { getVideoFeedItems } from '@/lib/stores/videoFeedStore';
 import {
     SearchHashtagResult,
     SearchResultsBundle,
@@ -34,7 +34,7 @@ const baseVideoViews: Record<string, number> = {
 };
 
 const toVideoResult = (): SearchVideoResult[] =>
-    mockVideos.map((video, index) => ({
+    getVideoFeedItems().map((video, index) => ({
         id: video.id,
         title: video.title,
         creatorUsername: video.creatorUsername,
@@ -44,7 +44,7 @@ const toVideoResult = (): SearchVideoResult[] =>
     }));
 
 const toHashtagPool = (): SearchHashtagResult[] => {
-    const fromCaptions = mockVideos.map((video) => ({
+    const fromCaptions = getVideoFeedItems().map((video) => ({
         id: `tag_auto_${video.id}`,
         tag: video.title.toLowerCase().replace(/\s+/g, ''),
         postsCount: Math.max(5000, Math.round(video.likesCount * 18)),

@@ -1,6 +1,6 @@
 export type CreateMediaType = 'image' | 'video';
 
-export type CreateVisibility = 'public' | 'followers_only' | 'private';
+export type CreateVisibility = 'public' | 'premium' | 'followers_only' | 'private';
 
 export type CreateImageFilter = 'original' | 'mono' | 'warm';
 

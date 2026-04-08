@@ -17,6 +17,7 @@ type CommentsThreadProps = {
     videoTitle?: string;
     onCommentCreated?: (videoId: string) => void;
     compact?: boolean;
+    commentsDisabled?: boolean;
 };
 
 export default function CommentsThread({
@@ -24,6 +25,7 @@ export default function CommentsThread({
     videoTitle,
     onCommentCreated,
     compact = false,
+    commentsDisabled = false,
 }: CommentsThreadProps) {
     const insets = useSafeAreaInsets();
     const [comments, setComments] = useState<VideoComment[]>([]);
@@ -40,6 +42,15 @@ export default function CommentsThread({
     const hasMoreComments = visibleComments.length < comments.length;
 
     useEffect(() => {
+        if (commentsDisabled) {
+            setComments([]);
+            setPage(1);
+            setCommentText('');
+            setReplyTarget(null);
+            setIsLoading(false);
+            return;
+        }
+
         let isMounted = true;
         const load = async () => {
             setIsLoading(true);
@@ -57,7 +68,7 @@ export default function CommentsThread({
         return () => {
             isMounted = false;
         };
-    }, [videoId]);
+    }, [commentsDisabled, videoId]);
 
     useEffect(() => {
         if (compact) return;
@@ -236,25 +247,36 @@ export default function CommentsThread({
                         Loading comments...
                     </AppText>
                 </View>
+            ) : commentsDisabled ? (
+                <View className="flex-1 items-center justify-center px-6">
+                    <AppText className="text-center text-base font-bold" color="#111111">
+                        Comments for this post are turned off.
+                    </AppText>
+                    <AppText className="mt-2 text-center text-sm" color="#52525B">
+                        The creator disabled commenting on this post.
+                    </AppText>
+                </View>
             ) : (
                 compact ? compactList : fullPageList
             )}
 
-            <CommentComposer
-                value={commentText}
-                onChangeText={setCommentText}
-                onSubmit={handleSubmitComment}
-                replyTarget={replyTarget}
-                onCancelReply={() => {
-                    setReplyTarget(null);
-                    setCommentText('');
-                    AccessibilityInfo.announceForAccessibility('Reply cancelled');
-                }}
-                isSubmitting={isSubmitting}
-                useBottomSheetInput={compact}
-                containerStyle={compact ? undefined : { paddingBottom: 16 + keyboardInset + insets.bottom }}
-                focusTrigger={replyTarget?.id}
-            />
+            {commentsDisabled ? null : (
+                <CommentComposer
+                    value={commentText}
+                    onChangeText={setCommentText}
+                    onSubmit={handleSubmitComment}
+                    replyTarget={replyTarget}
+                    onCancelReply={() => {
+                        setReplyTarget(null);
+                        setCommentText('');
+                        AccessibilityInfo.announceForAccessibility('Reply cancelled');
+                    }}
+                    isSubmitting={isSubmitting}
+                    useBottomSheetInput={compact}
+                    containerStyle={compact ? undefined : { paddingBottom: 16 + keyboardInset + insets.bottom }}
+                    focusTrigger={replyTarget?.id}
+                />
+            )}
         </View>
     );
 

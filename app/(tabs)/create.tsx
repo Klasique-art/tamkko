@@ -18,12 +18,14 @@ import AppText from '@/components/ui/AppText';
 import Screen from '@/components/ui/Screen';
 import { useColors } from '@/config/colors';
 import { useToast } from '@/context/ToastContext';
+import { useAuth } from '@/context/AuthContext';
 import {
     CREATE_MAX_CAPTION_LENGTH,
     CREATE_MAX_RECORDING_SECONDS,
     imageFilterOptions,
 } from '@/data/mock';
 import { simulateCreateUpload } from '@/lib/services/mockCreateUploadService';
+import { useVideoFeedStore } from '@/lib/stores/videoFeedStore';
 import { CreateDraft } from '@/types/create.types';
 
 const initialDraft: CreateDraft = {
@@ -40,6 +42,8 @@ export default function CreateTab() {
     const colors = useColors();
     const insets = useSafeAreaInsets();
     const { showToast } = useToast();
+    const { user } = useAuth();
+    const addCreatedPost = useVideoFeedStore((state) => state.addCreatedPost);
 
     const [draft, setDraft] = React.useState<CreateDraft>(initialDraft);
     const [uploadProgress, setUploadProgress] = React.useState(0);
@@ -48,7 +52,7 @@ export default function CreateTab() {
 
     const [isCameraOpen, setIsCameraOpen] = React.useState(false);
     const [isRecording, setIsRecording] = React.useState(false);
-    const [cameraFacing, setCameraFacing] = React.useState<'front' | 'back'>('back');
+    const [cameraFacing, setCameraFacing] = React.useState<'front' | 'back'>('front');
     const [recordingElapsedSeconds, setRecordingElapsedSeconds] = React.useState(0);
     const [isVideoMuted, setIsVideoMuted] = React.useState(false);
     const [isVideoPlaying, setIsVideoPlaying] = React.useState(true);
@@ -196,6 +200,7 @@ export default function CreateTab() {
             return;
         }
 
+        setCameraFacing('front');
         setIsCameraOpen(true);
     };
 
@@ -239,10 +244,10 @@ export default function CreateTab() {
         }
     };
 
-    const handleStopRecording = async () => {
+    const handleStopRecording = React.useCallback(async () => {
         if (!cameraRef.current || !isRecording) return;
         await cameraRef.current.stopRecording();
-    };
+    }, [isRecording]);
 
     React.useEffect(() => {
         if (!isRecording) return;
@@ -263,7 +268,7 @@ export default function CreateTab() {
         }, 250);
 
         return () => clearInterval(timer);
-    }, [isRecording]);
+    }, [handleStopRecording, isRecording]);
 
     React.useEffect(() => {
         if (draft.media?.type !== 'video' || !previewVideoUri) return;
@@ -435,6 +440,10 @@ export default function CreateTab() {
                 setUploadStage(stage);
             });
 
+            const creatorHandle = user?.first_name?.trim()
+                ? `@${user.first_name.trim().toLowerCase().replace(/\s+/g, '.')}`
+                : '@creator';
+            addCreatedPost({ draft, creatorUsername: creatorHandle });
             showToast('Post uploaded successfully (simulated).', { variant: 'success' });
             setDraft(initialDraft);
         } catch {

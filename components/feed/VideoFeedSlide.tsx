@@ -18,24 +18,20 @@ type VideoFeedSlideProps = {
     onTipPress?: (video: VideoItem) => void;
     onCommentPress?: (video: VideoItem) => void;
     onSharePress?: (video: VideoItem) => void;
+    onMorePress?: (video: VideoItem) => void;
     isFollowingCreator?: boolean;
     onFollowCreator?: (creatorHandle: string) => void;
     onToggleLike?: () => void;
+    showMoreButton?: boolean;
 };
 
-function VideoFeedSlide({
-    item,
-    height,
-    index,
-    isActive,
-    onCreatorPress,
-    onTipPress,
-    onCommentPress,
-    onSharePress,
-    isFollowingCreator = false,
-    onFollowCreator,
-    onToggleLike,
-}: VideoFeedSlideProps) {
+function ActiveVideoSurface({
+    source,
+    isPlaying,
+}: {
+    source: NonNullable<VideoItem['videoSource']>;
+    isPlaying: boolean;
+}) {
     const safelyPause = React.useCallback((target: ReturnType<typeof useVideoPlayer>) => {
         try {
             target.pause();
@@ -48,6 +44,54 @@ function VideoFeedSlide({
         } catch {}
     }, []);
 
+    const player = useVideoPlayer(source, (videoPlayer) => {
+        videoPlayer.loop = true;
+        videoPlayer.muted = false;
+        videoPlayer.volume = 1;
+        videoPlayer.pause();
+    });
+
+    React.useEffect(() => {
+        if (isPlaying) {
+            safelyPlay(player);
+        } else {
+            safelyPause(player);
+        }
+    }, [isPlaying, player, safelyPause, safelyPlay]);
+
+    React.useEffect(
+        () => () => {
+            safelyPause(player);
+        },
+        [player, safelyPause]
+    );
+
+    return (
+        <VideoView
+            player={player}
+            style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}
+            contentFit="cover"
+            nativeControls={false}
+            fullscreenOptions={{ enable: false }}
+        />
+    );
+}
+
+function VideoFeedSlide({
+    item,
+    height,
+    index,
+    isActive,
+    onCreatorPress,
+    onTipPress,
+    onCommentPress,
+    onSharePress,
+    onMorePress,
+    isFollowingCreator = false,
+    onFollowCreator,
+    onToggleLike,
+    showMoreButton = false,
+}: VideoFeedSlideProps) {
     const lastTapRef = React.useRef(0);
     const singleTapTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
     const burstScale = React.useRef(new Animated.Value(0.3)).current;
@@ -57,27 +101,9 @@ function VideoFeedSlide({
     const [playbackIcon, setPlaybackIcon] = React.useState<'play' | 'pause'>('pause');
     const [isPlaying, setIsPlaying] = React.useState(true);
     const shouldMountVideo = isActive;
-    const player = useVideoPlayer(item.videoSource ?? MOCK_TEST_VIDEO_SOURCE, (videoPlayer) => {
-        videoPlayer.loop = true;
-        videoPlayer.muted = true;
-        videoPlayer.volume = 1;
-        videoPlayer.pause();
-    });
-
     React.useEffect(() => {
-        if (!isActive || !shouldMountVideo) {
-            player.muted = true;
-            safelyPause(player);
-            return;
-        }
-
-        player.muted = false;
-        if (isPlaying) {
-            safelyPlay(player);
-        } else {
-            safelyPause(player);
-        }
-    }, [isActive, isPlaying, player, safelyPause, safelyPlay, shouldMountVideo]);
+        if (!isActive) setIsPlaying(false);
+    }, [isActive]);
 
     const playLikeBurst = React.useCallback(() => {
         burstScale.setValue(0.35);
@@ -143,17 +169,14 @@ function VideoFeedSlide({
     const togglePlayback = React.useCallback(() => {
         if (!isActive) return;
         const nextIsPlaying = !isPlaying;
-        if (nextIsPlaying) {
-            safelyPlay(player);
-            AccessibilityInfo.announceForAccessibility('Video playing');
-            playPlaybackFeedback('play');
-        } else {
-            safelyPause(player);
-            AccessibilityInfo.announceForAccessibility('Video paused');
-            playPlaybackFeedback('pause');
-        }
+        AccessibilityInfo.announceForAccessibility(nextIsPlaying ? 'Video playing' : 'Video paused');
+        playPlaybackFeedback(nextIsPlaying ? 'play' : 'pause');
         setIsPlaying(nextIsPlaying);
-    }, [isActive, isPlaying, playPlaybackFeedback, player, safelyPause, safelyPlay]);
+    }, [isActive, isPlaying, playPlaybackFeedback]);
+
+    React.useEffect(() => {
+        if (isActive) setIsPlaying(true);
+    }, [isActive, item.id]);
 
     React.useEffect(() => {
         return () => {
@@ -190,12 +213,9 @@ function VideoFeedSlide({
         >
             <View style={{ height, backgroundColor: index % 2 === 0 ? '#0a0a0a' : '#111111' }}>
                 {shouldMountVideo ? (
-                    <VideoView
-                        player={player}
-                        style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}
-                        contentFit="cover"
-                        nativeControls={false}
-                        fullscreenOptions={{ enable: false }}
+                    <ActiveVideoSurface
+                        source={item.videoSource ?? MOCK_TEST_VIDEO_SOURCE}
+                        isPlaying={isPlaying}
                     />
                 ) : (
                     <View
@@ -246,10 +266,13 @@ function VideoFeedSlide({
                     likesCount={item.likesCount}
                     commentsCount={item.commentsCount}
                     sharesCount={Math.max(12, Math.floor(item.likesCount * 0.04))}
+                    allowComments={item.allowComments !== false}
                     isLiked={item.isLiked}
                     onLike={triggerLike}
                     onComment={() => onCommentPress?.(item)}
                     onShare={() => onSharePress?.(item)}
+                    onMore={() => onMorePress?.(item)}
+                    showMoreButton={showMoreButton}
                 />
 
                 <VideoMetaOverlay

@@ -9,6 +9,7 @@ import AppText from '@/components/ui/AppText';
 import Screen from '@/components/ui/Screen';
 import { useColors } from '@/config/colors';
 import { useAuth } from '@/context/AuthContext';
+import { useNotificationCenter } from '@/context/NotificationCenterContext';
 
 const guestBenefits = [
     'Follow your favorite creators',
@@ -25,6 +26,7 @@ const guestQuickActions = [
 export default function ProfileTab() {
     const colors = useColors();
     const { isAuthenticated, user, logout } = useAuth();
+    const { unreadCount } = useNotificationCenter();
     const [logoutConfirmVisible, setLogoutConfirmVisible] = React.useState(false);
 
     const openLogin = () => {
@@ -44,6 +46,15 @@ export default function ProfileTab() {
     };
     const openAnalytics = () => {
         router.push('/profile/analytics' as Href);
+    };
+    const openReferral = () => {
+        router.push('/referral' as Href);
+    };
+    const openWallet = () => {
+        router.push('/wallet' as Href);
+    };
+    const openNotifications = () => {
+        router.push('/notifications' as Href);
     };
 
     const handleLogoutConfirmed = async () => {
@@ -212,6 +223,72 @@ export default function ProfileTab() {
                         </View>
                         <AppText className="mt-1 text-xs leading-5" color={colors.textSecondary}>
                             View views, engagement, watch-time, and earnings insights.
+                        </AppText>
+                    </Pressable>
+
+                    <Pressable
+                        onPress={openReferral}
+                        className="rounded-2xl border p-4"
+                        style={{ borderColor: colors.border, backgroundColor: colors.backgroundAlt }}
+                        accessibilityRole="button"
+                        accessibilityLabel="Open referral"
+                        accessibilityHint="Manage referral code, earnings, leaderboard, and ambassador status"
+                    >
+                        <View className="flex-row items-center justify-between">
+                            <AppText className="text-base font-semibold" color={colors.textPrimary}>
+                                Referral
+                            </AppText>
+                            <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
+                        </View>
+                        <AppText className="mt-1 text-xs leading-5" color={colors.textSecondary}>
+                            Referral code, network, earnings, leaderboard, and ambassador flows.
+                        </AppText>
+                    </Pressable>
+
+                    <Pressable
+                        onPress={openNotifications}
+                        className="rounded-2xl border p-4"
+                        style={{ borderColor: colors.border, backgroundColor: colors.backgroundAlt }}
+                        accessibilityRole="button"
+                        accessibilityLabel="Open notifications"
+                        accessibilityHint="View notification center and preferences"
+                    >
+                        <View className="flex-row items-center justify-between">
+                            <View className="flex-row items-center">
+                                <AppText className="text-base font-semibold" color={colors.textPrimary}>
+                                    Notifications
+                                </AppText>
+                                {unreadCount > 0 ? (
+                                    <View className="ml-2 rounded-full px-2 py-0.5" style={{ backgroundColor: colors.error }}>
+                                        <AppText className="text-[10px] font-bold" color={colors.white}>
+                                            {unreadCount > 99 ? '99+' : unreadCount}
+                                        </AppText>
+                                    </View>
+                                ) : null}
+                            </View>
+                            <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
+                        </View>
+                        <AppText className="mt-1 text-xs leading-5" color={colors.textSecondary}>
+                            Preferences, unread updates, and deep-link notifications.
+                        </AppText>
+                    </Pressable>
+
+                    <Pressable
+                        onPress={openWallet}
+                        className="rounded-2xl border p-4"
+                        style={{ borderColor: colors.border, backgroundColor: colors.backgroundAlt }}
+                        accessibilityRole="button"
+                        accessibilityLabel="Open wallet"
+                        accessibilityHint="Manage transactions, subscriptions, withdrawals, and payout account"
+                    >
+                        <View className="flex-row items-center justify-between">
+                            <AppText className="text-base font-semibold" color={colors.textPrimary}>
+                                Wallet
+                            </AppText>
+                            <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
+                        </View>
+                        <AppText className="mt-1 text-xs leading-5" color={colors.textSecondary}>
+                            Transactions, earnings, subscriptions, withdrawals, and MoMo account.
                         </AppText>
                     </Pressable>
                 </View>

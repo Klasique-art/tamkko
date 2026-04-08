@@ -8,7 +8,7 @@ import AppText from '@/components/ui/AppText';
 import Screen from '@/components/ui/Screen';
 import { useColors } from '@/config/colors';
 import { getFollowedCreators } from '@/data/mock/following';
-import { mockVideos } from '@/data/mock';
+import { useVideoFeedStore } from '@/lib/stores/videoFeedStore';
 import { VideoItem } from '@/types/video.types';
 
 const compact = (value: number) =>
@@ -77,11 +77,12 @@ export default function ExploreFeedScreen() {
     const colors = useColors();
     const { width } = useWindowDimensions();
     const followingCreators = useMemo(() => getFollowedCreators(), []);
+    const videos = useVideoFeedStore((state) => state.videos);
     const [activeSection, setActiveSection] = useState(sections[0]);
 
-    const videos = useMemo(
-        () => mockVideos.filter((video) => !followingCreators.has(video.creatorUsername)),
-        [followingCreators]
+    const discoverVideos = useMemo(
+        () => videos.filter((video) => !followingCreators.has(video.creatorUsername)),
+        [followingCreators, videos]
     );
 
     const tileGap = 10;
@@ -148,7 +149,7 @@ export default function ExploreFeedScreen() {
     return (
         <Screen title="Explore" className="pt-2">
             <FlashList
-                data={videos}
+                data={discoverVideos}
                 keyExtractor={(item) => item.id}
                 numColumns={2}
                 renderItem={renderTile}

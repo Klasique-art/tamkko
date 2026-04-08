@@ -5,7 +5,8 @@ import { Pressable, ScrollView, View } from 'react-native';
 import AppText from '@/components/ui/AppText';
 import Screen from '@/components/ui/Screen';
 import { useColors } from '@/config/colors';
-import { mockTrendingHashtags, mockUsers, mockVideos, MOCK_TEST_VIDEO_SOURCE } from '@/data/mock';
+import { mockTrendingHashtags, mockUsers, MOCK_TEST_VIDEO_SOURCE } from '@/data/mock';
+import { useVideoFeedStore } from '@/lib/stores/videoFeedStore';
 
 function DiscoverVideoCard({ title, creator }: { title: string; creator: string }) {
     const colors = useColors();
@@ -34,6 +35,7 @@ function DiscoverVideoCard({ title, creator }: { title: string; creator: string 
 
 export default function DiscoverTab() {
     const colors = useColors();
+    const videos = useVideoFeedStore((state) => state.videos);
 
     return (
         <Screen className="pt-4">
@@ -73,7 +75,7 @@ export default function DiscoverTab() {
                 <View className="mt-6">
                     <AppText className="text-sm font-semibold" color={colors.textPrimary}>Trending Videos</AppText>
                     <View className="mt-2 gap-2">
-                        {mockVideos.map((video) => (
+                        {videos.map((video) => (
                             <DiscoverVideoCard
                                 key={video.id}
                                 title={video.title}

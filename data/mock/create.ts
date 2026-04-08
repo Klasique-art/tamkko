@@ -3,8 +3,13 @@ import { CreateImageFilter, CreateVisibility } from '@/types/create.types';
 export const createVisibilityOptions: { value: CreateVisibility; label: string; description: string }[] = [
     {
         value: 'public',
-        label: 'Public',
-        description: 'Anyone can watch this post.',
+        label: 'Free',
+        description: 'Anyone can watch this post (default).',
+    },
+    {
+        value: 'premium',
+        label: 'Paid (Subscribers)',
+        description: 'Only active subscribers can view this post.',
     },
     {
         value: 'followers_only',

@@ -23,6 +23,9 @@ type VideoSnapFeedProps = {
     showFeedSwitcher?: boolean;
     navTitle?: string;
     showEndOfFeedCard?: boolean;
+    initialVideoId?: string;
+    showMoreButton?: boolean;
+    onMorePress?: (video: VideoItem) => void;
 };
 
 export default function VideoSnapFeed({
@@ -33,11 +36,16 @@ export default function VideoSnapFeed({
     showFeedSwitcher = false,
     navTitle = 'Feed',
     showEndOfFeedCard = false,
+    initialVideoId,
+    showMoreButton = false,
+    onMorePress,
 }: VideoSnapFeedProps) {
     const [pageHeight, setPageHeight] = React.useState(0);
     const [feedData, setFeedData] = React.useState<VideoItem[]>(videos);
     const [tipVideo, setTipVideo] = React.useState<VideoItem | null>(null);
     const [commentVideo, setCommentVideo] = React.useState<VideoItem | null>(null);
+    const [isCommentSheetOpen, setIsCommentSheetOpen] = React.useState(false);
+    const [isTipSheetOpen, setIsTipSheetOpen] = React.useState(false);
     const navigation = useNavigation();
     const isScreenFocused = useIsFocused();
     const router = useRouter();
@@ -46,12 +54,33 @@ export default function VideoSnapFeed({
     const commentSheetRef = React.useRef<AppBottomSheetRef>(null);
     const listRef = React.useRef<FlatList<VideoItem>>(null);
     const currentIndexRef = React.useRef(0);
+    const hasAppliedInitialScroll = React.useRef(false);
     const [activeIndex, setActiveIndex] = React.useState(0);
     const [followedCreators, setFollowedCreators] = React.useState<Set<string>>(getFollowedCreators());
 
     React.useEffect(() => {
         setFeedData(videos);
     }, [videos]);
+
+    React.useEffect(() => {
+        if (!initialVideoId) {
+            hasAppliedInitialScroll.current = true;
+            return;
+        }
+        if (hasAppliedInitialScroll.current) return;
+        if (!pageHeight || !feedData.length || !initialVideoId) return;
+        const nextIndex = feedData.findIndex((item) => item.id === initialVideoId);
+        if (nextIndex < 0) return;
+        hasAppliedInitialScroll.current = true;
+        currentIndexRef.current = nextIndex;
+        setActiveIndex(nextIndex);
+        requestAnimationFrame(() => {
+            listRef.current?.scrollToOffset({
+                offset: nextIndex * pageHeight,
+                animated: false,
+            });
+        });
+    }, [feedData, initialVideoId, pageHeight]);
 
     const toggleLike = React.useCallback((videoId: string) => {
         setFeedData((current) =>
@@ -69,6 +98,7 @@ export default function VideoSnapFeed({
 
     const openTipSheet = React.useCallback((video: VideoItem) => {
         setTipVideo(video);
+        setIsTipSheetOpen(true);
         requestAnimationFrame(() => {
             tipSheetRef.current?.open();
         });
@@ -76,6 +106,7 @@ export default function VideoSnapFeed({
 
     const openCommentSheet = React.useCallback((video: VideoItem) => {
         setCommentVideo(video);
+        setIsCommentSheetOpen(true);
         requestAnimationFrame(() => {
             commentSheetRef.current?.open();
         });
@@ -118,25 +149,31 @@ export default function VideoSnapFeed({
                 item={item}
                 height={pageHeight}
                 index={index}
-                isActive={isScreenFocused && index === activeIndex}
+                isActive={isScreenFocused && index === activeIndex && !isCommentSheetOpen && !isTipSheetOpen}
                 onCreatorPress={onCreatorPress}
                 onTipPress={() => openTipSheet(item)}
                 onCommentPress={() => openCommentSheet(item)}
                 onSharePress={() => handleShare(item)}
+                onMorePress={() => onMorePress?.(item)}
                 isFollowingCreator={followedCreators.has(normalizeCreatorHandle(item.creatorUsername))}
                 onFollowCreator={toggleFollowCreator}
                 onToggleLike={() => toggleLike(item.id)}
+                showMoreButton={showMoreButton}
             />
         ),
         [
             activeIndex,
             followedCreators,
             handleShare,
+            isCommentSheetOpen,
             isScreenFocused,
+            isTipSheetOpen,
             onCreatorPress,
+            onMorePress,
             openCommentSheet,
             openTipSheet,
             pageHeight,
+            showMoreButton,
             toggleFollowCreator,
             toggleLike,
         ]
@@ -280,14 +317,20 @@ export default function VideoSnapFeed({
             <TipBottomSheet
                 ref={tipSheetRef}
                 video={tipVideo}
-                onClosed={() => setTipVideo(null)}
+                onClosed={() => {
+                    setTipVideo(null);
+                    setIsTipSheetOpen(false);
+                }}
                 onTipSuccess={onTipSuccess}
             />
 
             <CommentsBottomSheet
                 ref={commentSheetRef}
                 video={commentVideo}
-                onClosed={() => setCommentVideo(null)}
+                onClosed={() => {
+                    setCommentVideo(null);
+                    setIsCommentSheetOpen(false);
+                }}
                 onCommentCreated={incrementCommentCount}
             />
         </View>

@@ -9,8 +9,9 @@ import AppText from '@/components/ui/AppText';
 import Screen from '@/components/ui/Screen';
 import { useColors } from '@/config/colors';
 import { useToast } from '@/context/ToastContext';
-import { mockCreatorVideos, mockVideos } from '@/data/mock';
+import { mockCreatorVideos } from '@/data/mock';
 import { MOCK_TEST_VIDEO_SOURCE } from '@/data/mock/videos';
+import { useVideoFeedStore } from '@/lib/stores/videoFeedStore';
 
 type SimulatedVideoDetail = {
     id: string;
@@ -37,42 +38,53 @@ export default function VideoDetailScreen() {
     const { showToast } = useToast();
     const { videoId } = useLocalSearchParams<{ videoId: string }>();
     const safeVideoId = videoId ?? 'video-sample';
+    const videos = useVideoFeedStore((state) => state.videos);
 
-    const detail = useMemo(() => {
-        const feedMatch = mockVideos.find((item) => item.id === safeVideoId);
+    const detailPayload = useMemo(() => {
+        const feedMatch = videos.find((item) => item.id === safeVideoId);
         if (feedMatch) {
             return {
-                id: feedMatch.id,
-                title: feedMatch.title,
-                caption: feedMatch.caption ?? 'No caption',
-                creatorUsername: feedMatch.creatorUsername,
-                likesCount: feedMatch.likesCount,
-                commentsCount: feedMatch.commentsCount,
-                viewsCount: Math.max(22000, feedMatch.likesCount * 18),
+                detail: {
+                    id: feedMatch.id,
+                    title: feedMatch.title,
+                    caption: feedMatch.caption ?? 'No caption',
+                    creatorUsername: feedMatch.creatorUsername,
+                    likesCount: feedMatch.likesCount,
+                    commentsCount: feedMatch.commentsCount,
+                    viewsCount: Math.max(22000, feedMatch.likesCount * 18),
+                },
+                videoSource: feedMatch.videoSource ?? MOCK_TEST_VIDEO_SOURCE,
             };
         }
 
         const creatorMatch = mockCreatorVideos.find((item) => item.id === safeVideoId);
         if (creatorMatch) {
             return {
-                id: creatorMatch.id,
-                title: creatorMatch.title,
-                caption: `From creator profile • ${creatorMatch.visibility === 'locked' ? 'Subscriber video' : 'Public video'}`,
-                creatorUsername: '@creator',
-                likesCount: creatorMatch.likesCount,
-                commentsCount: Math.floor(creatorMatch.likesCount * 0.08),
-                viewsCount: creatorMatch.viewsCount,
+                detail: {
+                    id: creatorMatch.id,
+                    title: creatorMatch.title,
+                    caption: `From creator profile - ${creatorMatch.visibility === 'locked' ? 'Subscriber video' : 'Public video'}`,
+                    creatorUsername: '@creator',
+                    likesCount: creatorMatch.likesCount,
+                    commentsCount: Math.floor(creatorMatch.likesCount * 0.08),
+                    viewsCount: creatorMatch.viewsCount,
+                },
+                videoSource: MOCK_TEST_VIDEO_SOURCE,
             };
         }
 
-        return defaultVideoDetail(safeVideoId);
-    }, [safeVideoId]);
+        return {
+            detail: defaultVideoDetail(safeVideoId),
+            videoSource: MOCK_TEST_VIDEO_SOURCE,
+        };
+    }, [safeVideoId, videos]);
 
+    const detail = detailPayload.detail;
     const [isLiked, setIsLiked] = useState(false);
     const [isSaved, setIsSaved] = useState(false);
     const [likesCount, setLikesCount] = useState(detail.likesCount);
 
-    const player = useVideoPlayer(MOCK_TEST_VIDEO_SOURCE, (videoPlayer) => {
+    const player = useVideoPlayer(detailPayload.videoSource, (videoPlayer) => {
         videoPlayer.loop = true;
         videoPlayer.muted = false;
         videoPlayer.volume = 1;

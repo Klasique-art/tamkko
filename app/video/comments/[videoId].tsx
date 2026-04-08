@@ -3,18 +3,20 @@ import React from 'react';
 
 import CommentsThread from '@/components/feed/comments/CommentsThread';
 import Screen from '@/components/ui/Screen';
-import { mockVideos } from '@/data/mock';
+import { useVideoFeedStore } from '@/lib/stores/videoFeedStore';
 
 export default function VideoCommentsScreen() {
     const { videoId } = useLocalSearchParams<{ videoId: string }>();
     const safeVideoId = videoId ?? 'vid_001';
-    const matchedVideo = mockVideos.find((item) => item.id === safeVideoId);
+    const videos = useVideoFeedStore((state) => state.videos);
+    const matchedVideo = videos.find((item) => item.id === safeVideoId);
 
     return (
         <Screen title="Comments">
             <CommentsThread
                 videoId={safeVideoId}
                 videoTitle={matchedVideo?.title}
+                commentsDisabled={matchedVideo?.allowComments === false}
             />
         </Screen>
     );

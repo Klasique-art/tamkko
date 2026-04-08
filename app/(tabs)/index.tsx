@@ -4,12 +4,13 @@ import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import { StatusBar } from 'react-native';
 
 import VideoSnapFeed from '@/components/feed/VideoSnapFeed';
-import { mockVideos } from '@/data/mock';
+import { useVideoFeedStore } from '@/lib/stores/videoFeedStore';
 
 const sanitizeHandle = (handle: string) => handle.replace(/^@/, '').trim();
 
 export default function HomeFeedTab() {
     const isFocused = useIsFocused();
+    const videos = useVideoFeedStore((state) => state.videos);
 
     useFocusEffect(
         React.useCallback(() => {
@@ -26,7 +27,7 @@ export default function HomeFeedTab() {
     return (
         <>
             {isFocused ? <StatusBar barStyle="light-content" backgroundColor="#000000" /> : null}
-            <VideoSnapFeed videos={mockVideos} onCreatorPress={openCreator} showFeedSwitcher showEndOfFeedCard />
+            <VideoSnapFeed videos={videos} onCreatorPress={openCreator} showFeedSwitcher showEndOfFeedCard />
         </>
     );
 }

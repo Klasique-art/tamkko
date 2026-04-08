@@ -1,4 +1,4 @@
-﻿import { Href, router } from 'expo-router';
+import { Href, router } from 'expo-router';
 import React from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
 
@@ -53,6 +53,7 @@ export default function ProfileWorkspaceScreen() {
                 <View className="mt-4 gap-3">
                     {[ 
                         { label: 'Edit Profile', href: '/profile/edit' },
+                        { label: 'My Videos (Manage)', href: '/profile/content' },
                         { label: 'Subscription Pricing', href: '/profile/subscription-pricing' },
                         { label: 'Followers', href: '/profile/followers' },
                         { label: 'Following', href: '/profile/following' },

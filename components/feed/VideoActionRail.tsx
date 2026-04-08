@@ -8,10 +8,13 @@ type VideoActionRailProps = {
     likesCount: number;
     commentsCount: number;
     sharesCount: number;
+    allowComments?: boolean;
     isLiked?: boolean;
+    showMoreButton?: boolean;
     onLike?: () => void;
     onComment?: () => void;
     onShare?: () => void;
+    onMore?: () => void;
 };
 
 const compact = (value: number) =>
@@ -100,10 +103,13 @@ export default function VideoActionRail({
     likesCount,
     commentsCount,
     sharesCount,
+    allowComments = true,
     isLiked,
+    showMoreButton = false,
     onLike,
     onComment,
     onShare,
+    onMore,
 }: VideoActionRailProps) {
     return (
         <View className="absolute bottom-28 right-3 items-center">
@@ -117,8 +123,12 @@ export default function VideoActionRail({
             />
             <ActionButton
                 icon="chatbubble-outline"
-                label={compact(commentsCount)}
-                accessibilityLabel={`${commentsCount} comments. Open comments`}
+                label={allowComments ? compact(commentsCount) : 'Off'}
+                accessibilityLabel={
+                    allowComments
+                        ? `${commentsCount} comments. Open comments`
+                        : 'Comments are turned off for this post. Open details'
+                }
                 accessibilityHint="Double tap to open comments"
                 onPress={onComment}
             />
@@ -129,6 +139,15 @@ export default function VideoActionRail({
                 accessibilityHint="Double tap to share this video"
                 onPress={onShare}
             />
+            {showMoreButton ? (
+                <ActionButton
+                    icon="ellipsis-horizontal"
+                    label="More"
+                    accessibilityLabel="Open video management options"
+                    accessibilityHint="Double tap to open edit and delete actions"
+                    onPress={onMore}
+                />
+            ) : null}
         </View>
     );
 }
