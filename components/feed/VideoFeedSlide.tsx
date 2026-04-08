@@ -56,7 +56,7 @@ function VideoFeedSlide({
     const playbackOpacity = React.useRef(new Animated.Value(0)).current;
     const [playbackIcon, setPlaybackIcon] = React.useState<'play' | 'pause'>('pause');
     const [isPlaying, setIsPlaying] = React.useState(true);
-    const player = useVideoPlayer(MOCK_TEST_VIDEO_SOURCE, (videoPlayer) => {
+    const player = useVideoPlayer(item.videoSource ?? MOCK_TEST_VIDEO_SOURCE, (videoPlayer) => {
         videoPlayer.loop = true;
         videoPlayer.muted = false;
         videoPlayer.volume = 1;
@@ -265,5 +265,6 @@ export default memo(VideoFeedSlide, (prev, next) =>
     prev.item.likesCount === next.item.likesCount &&
     prev.item.commentsCount === next.item.commentsCount &&
     prev.item.caption === next.item.caption &&
-    prev.item.creatorUsername === next.item.creatorUsername
+    prev.item.creatorUsername === next.item.creatorUsername &&
+    prev.item.videoSource === next.item.videoSource
 );

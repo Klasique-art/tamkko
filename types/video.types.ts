@@ -6,6 +6,7 @@ export type VideoItem = {
     caption?: string;
     thumbnailUrl?: string;
     playbackUrl?: string;
+    videoSource?: number;
     creatorUsername: string;
     likesCount: number;
     commentsCount: number;

@@ -26,7 +26,7 @@ export default function HomeFeedTab() {
     return (
         <>
             {isFocused ? <StatusBar barStyle="light-content" backgroundColor="#000000" /> : null}
-            <VideoSnapFeed videos={mockVideos} onCreatorPress={openCreator} showFeedSwitcher />
+            <VideoSnapFeed videos={mockVideos} onCreatorPress={openCreator} showFeedSwitcher showEndOfFeedCard />
         </>
     );
 }

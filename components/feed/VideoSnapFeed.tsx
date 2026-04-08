@@ -22,6 +22,7 @@ type VideoSnapFeedProps = {
     showTopNav?: boolean;
     showFeedSwitcher?: boolean;
     navTitle?: string;
+    showEndOfFeedCard?: boolean;
 };
 
 export default function VideoSnapFeed({
@@ -31,6 +32,7 @@ export default function VideoSnapFeed({
     showTopNav = false,
     showFeedSwitcher = false,
     navTitle = 'Feed',
+    showEndOfFeedCard = false,
 }: VideoSnapFeedProps) {
     const [pageHeight, setPageHeight] = React.useState(0);
     const [feedData, setFeedData] = React.useState<VideoItem[]>(videos);
@@ -247,6 +249,31 @@ export default function VideoSnapFeed({
                         offset: pageHeight * index,
                         index,
                     })}
+                    ListFooterComponent={
+                        showEndOfFeedCard ? (
+                            <View
+                                style={{
+                                    height: pageHeight,
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    paddingHorizontal: 24,
+                                    backgroundColor: '#080808',
+                                }}
+                            >
+                                <View
+                                    className="w-full rounded-3xl px-6 py-7"
+                                    style={{ backgroundColor: 'rgba(255,255,255,0.08)' }}
+                                >
+                                    <AppText className="text-center text-lg font-extrabold" color="#FFFFFF">
+                                        You reached the end of the feed
+                                    </AppText>
+                                    <AppText className="mt-2 text-center text-sm" color="rgba(255,255,255,0.85)">
+                                        Check back later for new drops from creators you follow.
+                                    </AppText>
+                                </View>
+                            </View>
+                        ) : null
+                    }
                 />
             ) : null}
 

@@ -53,6 +53,7 @@ export default function ProfileWorkspaceScreen() {
                 <View className="mt-4 gap-3">
                     {[ 
                         { label: 'Edit Profile', href: '/profile/edit' },
+                        { label: 'Subscription Pricing', href: '/profile/subscription-pricing' },
                         { label: 'Followers', href: '/profile/followers' },
                         { label: 'Following', href: '/profile/following' },
                         { label: 'Subscribers', href: '/profile/subscribers' },

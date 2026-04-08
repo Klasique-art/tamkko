@@ -1,4 +1,5 @@
 import { mockCreatorProfiles, mockCreatorVideos } from '@/data/mock/creators';
+import { subscriptionPricingService } from '@/lib/services/subscriptionPricingService';
 import { CreatorProfile, CreatorProfileScreenData, CreatorProfileVideo } from '@/types/creator.types';
 
 const normalizeUsername = (username: string) => username.replace(/^@/, '').trim().toLowerCase();
@@ -10,7 +11,13 @@ export const creatorProfileService = {
     async getCreatorProfileByUsername(username: string): Promise<CreatorProfile | null> {
         const normalized = normalizeUsername(username);
         const profile = mockCreatorProfiles.find((item) => item.username.toLowerCase() === normalized);
-        return profile ?? null;
+        if (!profile) return null;
+
+        const overriddenPrice = await subscriptionPricingService.getPrice(profile.username);
+        return {
+            ...profile,
+            monthlySubscriptionPriceGhs: overriddenPrice,
+        };
     },
 
     async getCreatorVideosByCreatorId(creatorId: string): Promise<CreatorProfileVideo[]> {

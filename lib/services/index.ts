@@ -18,4 +18,5 @@ export { creatorAnalyticsService } from './creatorAnalyticsService';
 export { followersService } from './followersService';
 export { followingService } from './followingService';
 export { subscribersService } from './subscribersService';
+export { subscriptionPricingService } from './subscriptionPricingService';
 
