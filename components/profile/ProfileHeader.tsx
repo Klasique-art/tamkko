@@ -1,11 +1,11 @@
 import { Ionicons } from '@expo/vector-icons';
 import React from 'react';
-import { useTranslation } from 'react-i18next';
 import { Pressable, View } from 'react-native';
 
 import { useColors } from '@/config';
-
+
 import AppText from '@/components/ui/AppText';
+
 interface ProfileHeaderProps {
     name: string;
     email: string;
@@ -16,7 +16,6 @@ interface ProfileHeaderProps {
 
 const ProfileHeader = ({ name, email, joinDate, isVerified, onVerifyPress }: ProfileHeaderProps) => {
     const colors = useColors();
-    const { t } = useTranslation();
 
     const joinedDate = new Date(joinDate);
     const joinedLabel = joinedDate.toLocaleDateString(undefined, {
@@ -32,8 +31,8 @@ const ProfileHeader = ({ name, email, joinDate, isVerified, onVerifyPress }: Pro
                     <View
                         className="absolute bottom-0 right-0 bg-white rounded-full p-1 border-2"
                         style={{ borderColor: colors.background }}
-                        accessible={true}
-                        accessibilityLabel={t('Verified account')}
+                        accessible
+                        accessibilityLabel="Verified account"
                     >
                         <Ionicons name="checkmark-circle" size={20} color={colors.success} />
                     </View>
@@ -58,7 +57,7 @@ const ProfileHeader = ({ name, email, joinDate, isVerified, onVerifyPress }: Pro
                     className="mb-3 rounded-full px-4 py-2"
                     style={{ backgroundColor: `${colors.accent}20` }}
                     accessibilityRole="button"
-                    accessibilityLabel={t('Verify your account')}
+                    accessibilityLabel="Verify your account"
                 >
                     <View className="flex-row items-center">
                         <Ionicons name="shield-checkmark-outline" size={16} color={colors.accent} />
@@ -75,7 +74,7 @@ const ProfileHeader = ({ name, email, joinDate, isVerified, onVerifyPress }: Pro
                 className="px-3 py-1 rounded-full border"
                 style={{
                     borderColor: colors.border,
-                    backgroundColor: colors.backgroundAlt
+                    backgroundColor: colors.backgroundAlt,
                 }}
             >
                 <AppText style={{ color: colors.textSecondary, fontSize: 12 }}>

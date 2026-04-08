@@ -20,6 +20,24 @@ export type ForgotPasswordFormValues = {
     email: string;
 };
 
+export type OtpCodeFormValues = {
+    code: string;
+};
+
+export type ResetPasswordFormValues = {
+    password: string;
+    confirm_password: string;
+};
+
+export type ReactivateFormValues = {
+    email: string;
+    code: string;
+};
+
+const strongPasswordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z\d]).+$/;
+const simplePhoneRegex = /^\+?[1-9]\d{7,14}$/;
+const sixDigitCodeRegex = /^\d{6}$/;
+
 export const LoginValidationSchema = Yup.object().shape({
     email: Yup.string()
         .trim()
@@ -29,9 +47,6 @@ export const LoginValidationSchema = Yup.object().shape({
         .min(6, 'Password must be at least 6 characters.')
         .required('Password is required.'),
 });
-
-const strongPasswordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z\d]).+$/;
-const simplePhoneRegex = /^\+?[1-9]\d{7,14}$/;
 
 export const SignupValidationSchema = Yup.object().shape({
     email: Yup.string()
@@ -73,4 +88,35 @@ export const ForgotPasswordValidationSchema = Yup.object().shape({
         .trim()
         .email('Please enter a valid email address.')
         .required('Email is required.'),
+});
+
+export const OtpValidationSchema = Yup.object().shape({
+    code: Yup.string()
+        .trim()
+        .matches(sixDigitCodeRegex, 'Enter a valid 6-digit code.')
+        .required('Code is required.'),
+});
+
+export const ResetPasswordValidationSchema = Yup.object().shape({
+    password: Yup.string()
+        .min(8, 'Password must be at least 8 characters.')
+        .matches(
+            strongPasswordRegex,
+            'Password must include uppercase, lowercase, number, and special character.'
+        )
+        .required('Password is required.'),
+    confirm_password: Yup.string()
+        .oneOf([Yup.ref('password')], 'Passwords do not match.')
+        .required('Please confirm your password.'),
+});
+
+export const ReactivateValidationSchema = Yup.object().shape({
+    email: Yup.string()
+        .trim()
+        .email('Please enter a valid email address.')
+        .required('Email is required.'),
+    code: Yup.string()
+        .trim()
+        .matches(sixDigitCodeRegex, 'Enter a valid 6-digit code.')
+        .required('Code is required.'),
 });

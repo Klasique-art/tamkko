@@ -1,10 +1,11 @@
-﻿export type TipRecord = {
-    tipId: string;
+export type TipFlowStep = 'form' | 'awaiting_approval' | 'success';
+
+export type SimulatedTipPayload = {
+    creatorHandle: string;
     videoId: string;
-    senderUserId: string;
-    recipientUserId: string;
     amount: number;
+    momoNumber: string;
     currency: string;
-    status: 'pending' | 'completed' | 'failed';
+    reference: string;
     createdAt: string;
 };

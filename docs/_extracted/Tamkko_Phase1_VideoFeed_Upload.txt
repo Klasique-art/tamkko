@@ -151,7 +151,7 @@ Viewers stream the video via the HLS playback URL from Cloudflare's CDN. The bac
 Video Visibility States:
 public — Visible to all users in the For You feed and on the creator's profile.
 followers_only — Visible only to users who follow the creator.
-premium — Locked. Viewers must pay a one-time fee to unlock (covered in Tipping & Wallet doc).
+premium — Locked. Viewers must have an active monthly subscription to the creator to watch (covered in Tipping & Wallet doc).
 private — Visible only to the creator. Does not appear in any feed.
 processing — Temporary state while Cloudflare transcodes the upload. Not visible to viewers.
 failed — Transcoding failed. Visible only to the creator with a retry option.
@@ -1182,7 +1182,7 @@ VIDEO_PRIVATE
 Video is private — only the creator can view it
 VIDEO_PREMIUM_LOCKED
 403
-Video is premium — viewer must pay to unlock playback
+Video is premium — viewer must have an active subscription to access playback
 UPLOAD_URL_EXPIRED
 400
 The Cloudflare upload URL has expired — request a new one

@@ -1,10 +1,10 @@
 import { useColors } from '@/config/colors';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import React, { useState } from 'react';
-import { useTranslation } from 'react-i18next';
 import { TextInput as RNTextInput, TextInputProps as RNTextInputProps, TouchableOpacity, View } from 'react-native';
-
+
 import AppText from '@/components/ui/AppText';
+
 type IconName = keyof typeof MaterialIcons.glyphMap | keyof typeof Ionicons.glyphMap;
 
 interface AppInputProps extends Omit<RNTextInputProps, 'onChange'> {
@@ -43,12 +43,10 @@ const AppInput = ({
     ...otherProps
 }: AppInputProps) => {
     const colors = useColors();
-    const { t } = useTranslation();
     const [isPasswordVisible, setIsPasswordVisible] = useState(false);
     const [isFocused, setIsFocused] = useState(false);
     const inputId = `input-${name}`;
 
-    // Handle password visibility toggle
     const togglePasswordVisibility = () => {
         setIsPasswordVisible(!isPasswordVisible);
     };
@@ -59,7 +57,6 @@ const AppInput = ({
         const iconColor = isFocused ? colors.accent : colors.textSecondary;
         const iconSize = 20;
 
-        // Check if it's a password field with eye icon
         if (icon === 'eye' || icon === 'eye-off') {
             return (
                 <Ionicons
@@ -70,12 +67,10 @@ const AppInput = ({
             );
         }
 
-        // Try MaterialIcons first
         if (icon in MaterialIcons.glyphMap) {
             return <MaterialIcons name={icon as any} size={iconSize} color={iconColor} />;
         }
 
-        // Fallback to Ionicons
         return <Ionicons name={icon as any} size={iconSize} color={iconColor} />;
     };
 
@@ -100,7 +95,7 @@ const AppInput = ({
                         borderColor: isFocused ? colors.accent : colors.border,
                         color: colors.textPrimary,
                     }}
-                    placeholder={placeholder ? t(placeholder) : placeholder}
+                    placeholder={placeholder}
                     placeholderTextColor={colors.textSecondary}
                     value={value}
                     onChangeText={onChange}
@@ -114,14 +109,14 @@ const AppInput = ({
                     secureTextEntry={secureTextEntry && !isPasswordVisible}
                     keyboardType={keyboardType}
                     autoCapitalize={autoCapitalize}
-                    accessibilityLabel={t(label)}
+                    accessibilityLabel={label}
                     {...otherProps}
                 />
                 {icon && (
                     <TouchableOpacity
                         className="absolute right-0 top-0 h-12 w-12 flex items-center justify-center"
                         onPress={secureTextEntry ? togglePasswordVisibility : iconClick}
-                        accessibilityLabel={iconAria ? t(iconAria) : t('Icon button')}
+                        accessibilityLabel={iconAria || 'Icon button'}
                         accessibilityRole="button"
                     >
                         {getIconComponent()}

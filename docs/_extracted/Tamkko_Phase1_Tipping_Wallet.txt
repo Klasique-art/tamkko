@@ -153,7 +153,7 @@ Full available balance up to withdrawal limit
 Example: Viewer tips GHS 10.00. Platform takes GHS 1.50 (15%). Creator wallet is credited GHS 8.50. The Hubtel processing fee (~1.5% of the transaction) is absorbed by the platform from its 15% share.
 2.4  Wallet Balance vs Pending vs Available
 total_balance — The sum of all earnings ever credited to the wallet. Read-only historical figure.
-pending_balance — Earnings from tips/unlocks where the MoMo payment is still processing (status: pending or processing). These funds cannot be withdrawn yet.
+pending_balance — Earnings from tips/subscriptions where the MoMo payment is still processing (status: pending or processing). These funds cannot be withdrawn yet.
 available_balance — Funds that are fully settled and ready to withdraw. This is total_balance minus pending_balance minus already_withdrawn.
 withdrawn_total — Total amount the creator has successfully withdrawn to their MoMo account over all time.
 minimum_withdrawal — GHS 10.00. Creators cannot withdraw less than this amount.
@@ -661,7 +661,7 @@ OK
 }
 5.3  Get Earnings Breakdown (By Video)
 👤
-User Story:  As a creator, I want to see which of my videos are earning the most tips and unlocks so I know what content my audience values.
+User Story:  As a creator, I want to see which of my videos are earning the most tips and subscription-driven premium views so I know what content my audience values.
 GET
 /api/v1/wallet/earnings/by-video
 Earnings By Video

@@ -1,7 +1,9 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 
-import i18n, { LANGUAGE_STORAGE_KEY, SupportedLanguage, setupI18n } from '@/config/i18n';
+export const LANGUAGE_STORAGE_KEY = '@tamkko_language';
+export const SUPPORTED_LANGUAGES = ['en', 'fr'] as const;
+export type SupportedLanguage = (typeof SUPPORTED_LANGUAGES)[number];
 
 interface LanguageContextType {
     language: SupportedLanguage;
@@ -10,15 +12,23 @@ interface LanguageContextType {
 
 const LanguageContext = createContext<LanguageContextType | undefined>(undefined);
 
+const normalizeLanguage = (language?: string | null): SupportedLanguage => {
+    const value = (language || '').slice(0, 2).toLowerCase();
+    return (SUPPORTED_LANGUAGES as readonly string[]).includes(value) ? (value as SupportedLanguage) : 'en';
+};
+
 export const LanguageProvider = ({ children }: { children: React.ReactNode }) => {
     const [language, setLanguageState] = useState<SupportedLanguage>('en');
     const [isReady, setIsReady] = useState(false);
 
     useEffect(() => {
         const bootstrap = async () => {
-            const initialLanguage = await setupI18n();
-            setLanguageState(initialLanguage);
-            setIsReady(true);
+            try {
+                const stored = await AsyncStorage.getItem(LANGUAGE_STORAGE_KEY);
+                setLanguageState(normalizeLanguage(stored));
+            } finally {
+                setIsReady(true);
+            }
         };
 
         void bootstrap();
@@ -28,7 +38,6 @@ export const LanguageProvider = ({ children }: { children: React.ReactNode }) =>
         if (nextLanguage === language) return;
 
         setLanguageState(nextLanguage);
-        await i18n.changeLanguage(nextLanguage);
         await AsyncStorage.setItem(LANGUAGE_STORAGE_KEY, nextLanguage);
     }, [language]);
 

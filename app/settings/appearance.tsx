@@ -1,15 +1,13 @@
 import React from 'react';
-import { useTranslation } from 'react-i18next';
 import { View } from 'react-native';
 
 import { AppSwitch, Nav, Screen } from '@/components';
+import AppText from '@/components/ui/AppText';
 import { useColors } from '@/config';
 import { useTheme } from '@/context/ThemeContext';
 
-import AppText from '@/components/ui/AppText';
 export default function AppearanceScreen() {
     const colors = useColors();
-    const { t } = useTranslation();
     const { theme, setTheme } = useTheme();
     const isDarkMode = theme === 'dark';
 
@@ -28,7 +26,7 @@ export default function AppearanceScreen() {
                     className="rounded-xl border p-4"
                     style={{
                         backgroundColor: colors.backgroundAlt,
-                        borderColor: colors.border
+                        borderColor: colors.border,
                     }}
                 >
                     <View className="flex-row items-center justify-between">
@@ -53,7 +51,7 @@ export default function AppearanceScreen() {
                             activeTrackColor={colors.accent50}
                             activeThumbColor={colors.accent}
                             inactiveThumbColor={colors.textSecondary}
-                            accessibilityLabel={t('Dark mode toggle')}
+                            accessibilityLabel="Dark mode toggle"
                             accessibilityRole="switch"
                             accessibilityState={{ checked: isDarkMode }}
                         />

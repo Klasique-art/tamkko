@@ -1,4 +1,6 @@
-﻿import { VideoItem } from '@/types/video.types';
+import { VideoItem } from '@/types/video.types';
+
+export const MOCK_TEST_VIDEO_SOURCE = require('../../assets/videos/test_vid.mp4');
 
 export const mockVideos: VideoItem[] = [
     {
@@ -6,7 +8,7 @@ export const mockVideos: VideoItem[] = [
         title: 'Street Dance Night',
         caption: 'Accra energy tonight',
         creatorUsername: '@klasique',
-        thumbnailUrl: 'https://images.unsplash.com/photo-1508700115892-45ecd05ae2ad?auto=format&fit=crop&w=1080&q=80',
+        thumbnailUrl: 'local-test-video',
         likesCount: 12403,
         commentsCount: 321,
         isLiked: false,
@@ -17,7 +19,7 @@ export const mockVideos: VideoItem[] = [
         title: 'Studio Session Snippet',
         caption: 'New track loading',
         creatorUsername: '@ama.creator',
-        thumbnailUrl: 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?auto=format&fit=crop&w=1080&q=80',
+        thumbnailUrl: 'local-test-video',
         likesCount: 8430,
         commentsCount: 210,
         isLiked: true,
@@ -28,9 +30,42 @@ export const mockVideos: VideoItem[] = [
         title: 'Campus Mic Challenge',
         caption: 'Who should win this round?',
         creatorUsername: '@campus.star',
-        thumbnailUrl: 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?auto=format&fit=crop&w=1080&q=80',
+        thumbnailUrl: 'local-test-video',
         likesCount: 5021,
         commentsCount: 140,
+        isLiked: false,
+        isBookmarked: false,
+    },
+    {
+        id: 'vid_004',
+        title: 'Night Rehearsal',
+        caption: 'Stage energy check',
+        creatorUsername: '@klasique',
+        thumbnailUrl: 'local-test-video',
+        likesCount: 4102,
+        commentsCount: 97,
+        isLiked: false,
+        isBookmarked: false,
+    },
+    {
+        id: 'vid_005',
+        title: 'Hook Challenge',
+        caption: 'Drop your duet version',
+        creatorUsername: '@ama.creator',
+        thumbnailUrl: 'local-test-video',
+        likesCount: 7399,
+        commentsCount: 205,
+        isLiked: false,
+        isBookmarked: true,
+    },
+    {
+        id: 'vid_006',
+        title: 'Final Mix Teaser',
+        caption: 'Ready for release',
+        creatorUsername: '@campus.star',
+        thumbnailUrl: 'local-test-video',
+        likesCount: 2891,
+        commentsCount: 56,
         isLiked: false,
         isBookmarked: false,
     },

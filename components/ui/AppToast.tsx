@@ -1,6 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
 import React, { useCallback, useEffect, useRef } from 'react';
-import { useTranslation } from 'react-i18next';
 import { Animated, Pressable, View } from 'react-native';
 
 import { useColors } from '@/config/colors';
@@ -25,7 +24,6 @@ const AppToast = ({
     onHide,
 }: AppToastProps) => {
     const colors = useColors();
-    const { t } = useTranslation();
     const opacity = useRef(new Animated.Value(0)).current;
     const translateY = useRef(new Animated.Value(-20)).current;
 
@@ -113,7 +111,7 @@ const AppToast = ({
                 </AppText>
                 <Pressable
                     onPress={hideToast}
-                    accessibilityLabel={t('Dismiss toast')}
+                    accessibilityLabel="Dismiss toast"
                     accessibilityRole="button"
                     className="ml-2 p-1"
                 >

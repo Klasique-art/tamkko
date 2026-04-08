@@ -6,10 +6,10 @@ import AppInput from './AppInput';
 import SelectInput from './SelectInput';
 import DateInput from './DateInput';
 
-type StringFieldFormValues = Record<string, string>;
+type FormFieldValues = Record<string, unknown>;
 type Option = { value: string; label: string };
 
-type Props<Values extends StringFieldFormValues = StringFieldFormValues> = {
+type Props<Values extends FormFieldValues = FormFieldValues> = {
     name: keyof Values & string;
     label: string;
     multiline?: boolean;
@@ -26,7 +26,7 @@ type Props<Values extends StringFieldFormValues = StringFieldFormValues> = {
     iconClick?: () => void;
 };
 
-const AppFormField = <Values extends StringFieldFormValues = StringFieldFormValues>({
+const AppFormField = <Values extends FormFieldValues = FormFieldValues>({
     name,
     label,
     multiline = false,
@@ -46,7 +46,7 @@ const AppFormField = <Values extends StringFieldFormValues = StringFieldFormValu
 
     const error = errors[name] as string;
     const isTouched = touched[name] as boolean;
-    const value = values[name];
+    const value = String(values[name] ?? '');
 
     // Map type to keyboard type
     const getKeyboardType = (): KeyboardTypeOptions => {

@@ -1,7 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import React from 'react';
-import { useTranslation } from 'react-i18next';
 import { View } from 'react-native';
 
 import { useColors } from '@/config';
@@ -30,7 +29,6 @@ const MembershipProgressCard = ({
     remainingToTargetLabel,
 }: MembershipProgressCardProps) => {
     const colors = useColors();
-    const { t } = useTranslation();
     const statusText = status.replace('_', ' ').toUpperCase();
     const payoutText = payoutStatus.replace('_', ' ').toUpperCase();
     const lotteryText = lotteryType.charAt(0).toUpperCase() + lotteryType.slice(1);
@@ -85,7 +83,7 @@ const MembershipProgressCard = ({
                     <View className="flex-row items-center">
                         <Ionicons name="cash-outline" size={16} color={colors.white} />
                         <AppText className="text-xs ml-2 flex-1" color={colors.white}>
-                            {t('Payout Status: {{status}}', { status: payoutText })}
+                            {`Payout Status: ${payoutText}`}
                         </AppText>
                     </View>
                     <View className={`px-2 py-1 rounded-full ${isParticipating ? 'bg-green-500/80' : 'bg-yellow-500/80'}`}>
@@ -95,7 +93,7 @@ const MembershipProgressCard = ({
                     </View>
                 </View>
                 <AppText className="text-xs mt-2" color={colors.white}>
-                    {t('Remaining to target: {{amount}}', { amount: remainingToTargetLabel })}
+                    {`Remaining to target: ${remainingToTargetLabel}`}
                 </AppText>
             </View>
         </LinearGradient>

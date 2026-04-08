@@ -17,14 +17,14 @@ const DashboardQuickActions = () => {
             label: 'Make Contribution',
             icon: 'wallet-outline',
             color: "#ff0000",
-            onPress: () => router.push('/(tabs)/wallet'),
+            onPress: () => router.push('/wallet'),
         },
         {
             id: 'history',
             label: 'Full History',
             icon: 'time-outline',
             color: "#0000ff",
-            onPress: () => router.push('/(tabs)/wallet'),
+            onPress: () => router.push('/wallet'),
         },
         // {
         //     id: 'invite',
@@ -40,7 +40,7 @@ const DashboardQuickActions = () => {
             label: 'How It Works',
             icon: 'help-circle-outline',
             color: colors.warning,
-            onPress: () => router.push('/(tabs)/wallet'),
+            onPress: () => router.push('/wallet'),
         },
     ] as const;
 

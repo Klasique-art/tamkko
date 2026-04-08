@@ -1,4 +1,4 @@
-﻿export { authService } from './authService';
+export { authService } from './authService';
 export { userService } from './userService';
 export { videoService } from './videoService';
 export { commentService } from './commentService';
@@ -11,4 +11,7 @@ export { leaderboardService } from './leaderboardService';
 export { notificationService } from './notificationService';
 export { roomService } from './roomService';
 export { roomRealtimeService } from './roomRealtimeService';
+export { mockRoomCommunityService } from './mockRoomCommunityService';
 export { uploadService } from './uploadService';
+export { creatorProfileService } from './creatorProfileService';
+

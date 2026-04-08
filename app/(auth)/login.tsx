@@ -1,46 +1,88 @@
-﻿import { Href, router } from 'expo-router';
+import { Href, router } from 'expo-router';
+import { FormikHelpers } from 'formik';
 import React from 'react';
-import { Pressable, View } from 'react-native';
+import { Pressable } from 'react-native';
 
-import Screen from '@/components/ui/Screen';
+import { AuthLinkRow, AuthShell, FormStatusMessage } from '@/components/auth';
+import { AppForm, AppFormField, FormLoader, SubmitButton } from '@/components/form';
 import AppText from '@/components/ui/AppText';
 import { useColors } from '@/config/colors';
+import { LoginFormValues, LoginValidationSchema } from '@/data/authValidation';
 import { useAuth } from '@/context/AuthContext';
+import { delay } from '@/lib/utils/delay';
+
+const initialValues: LoginFormValues = {
+    email: '',
+    password: '',
+};
 
 export default function LoginScreen() {
     const colors = useColors();
-    const { login, isLoading } = useAuth();
+    const { login } = useAuth();
+    const [loadingVisible, setLoadingVisible] = React.useState(false);
 
-    const handleMockLogin = async () => {
-        await login({ email: 'fan.viewer@tamkko.app', password: 'mock_password' });
-        router.replace('/profile' as Href);
+    const handleSubmit = async (
+        values: LoginFormValues,
+        { setStatus, setSubmitting }: FormikHelpers<LoginFormValues>
+    ) => {
+        setStatus(undefined);
+        setLoadingVisible(true);
+
+        try {
+            await delay(1200);
+            await login({
+                email: values.email.trim().toLowerCase(),
+                password: values.password,
+            });
+            router.replace('/(tabs)/profile' as Href);
+        } catch {
+            setStatus({ error: 'Unable to log in right now. Please try again.' });
+        } finally {
+            setLoadingVisible(false);
+            setSubmitting(false);
+        }
     };
 
     return (
-        <Screen className="pt-4">
-            <View className="flex-1 justify-center rounded-2xl border p-5" style={{ borderColor: colors.border, backgroundColor: colors.backgroundAlt }}>
-                <AppText className="text-2xl font-bold" color={colors.textPrimary}>Login</AppText>
-                <AppText className="mt-2 text-sm" color={colors.textSecondary}>
-                    Simulation mode: this signs you in locally without backend.
-                </AppText>
+        <AuthShell
+            title="Welcome Back"
+            subtitle="Log in to follow creators, send tips, and personalize your TAMKKO feed."
+            footer={<AuthLinkRow prompt="Don't have an account?" actionLabel="Sign up" href={'/(auth)/register' as Href} />}
+        >
+            <AppForm initialValues={initialValues} validationSchema={LoginValidationSchema} onSubmit={handleSubmit}>
+                <AppFormField<LoginFormValues>
+                    name="email"
+                    label="Email"
+                    placeholder="name@example.com"
+                    type="email"
+                    required
+                />
+                <AppFormField<LoginFormValues>
+                    name="password"
+                    label="Password"
+                    placeholder="Enter your password"
+                    type="password"
+                    required
+                    icon="eye"
+                    iconAria="Toggle password visibility"
+                />
 
                 <Pressable
-                    className="mt-5 rounded-xl px-4 py-3"
-                    style={{ backgroundColor: colors.textPrimary }}
-                    onPress={handleMockLogin}
-                    disabled={isLoading}
+                    className="self-end"
+                    onPress={() => router.push('/(auth)/forgot-password' as Href)}
+                    accessibilityRole="button"
+                    accessibilityLabel="Forgot password"
+                    accessibilityHint="Opens password recovery screen"
                 >
-                    <AppText className="text-center font-semibold" color={colors.background}>Login (Mock)</AppText>
+                    <AppText className="text-sm font-semibold" color={colors.textPrimary}>
+                        Forgot Password?
+                    </AppText>
                 </Pressable>
 
-                <Pressable
-                    className="mt-3 rounded-xl border px-4 py-3"
-                    style={{ borderColor: colors.border }}
-                    onPress={() => router.push('/(auth)/register' as Href)}
-                >
-                    <AppText className="text-center font-semibold" color={colors.textPrimary}>Go To Register</AppText>
-                </Pressable>
-            </View>
-        </Screen>
+                <FormStatusMessage />
+                <SubmitButton title="Log In" />
+                <FormLoader visible={loadingVisible} message="Signing you in" />
+            </AppForm>
+        </AuthShell>
     );
 }

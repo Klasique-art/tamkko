@@ -9,12 +9,7 @@ import { useAuth } from '@/context/AuthContext';
 
 export default function ProfileWorkspaceScreen() {
     const colors = useColors();
-    const { isAuthenticated, user, logout } = useAuth();
-
-    const handleLogout = async () => {
-        await logout();
-        router.replace('/(auth)/login' as Href);
-    };
+    const { isAuthenticated, user } = useAuth();
 
     if (!isAuthenticated) {
         return (
@@ -56,13 +51,10 @@ export default function ProfileWorkspaceScreen() {
                 </View>
 
                 <View className="mt-4 gap-3">
-                    {[
+                    {[ 
                         { label: 'Edit Profile', href: '/profile/edit' },
                         { label: 'Followers', href: '/profile/followers' },
                         { label: 'Following', href: '/profile/following' },
-                        { label: 'Security', href: '/profile/security' },
-                        { label: 'Sessions', href: '/profile/sessions' },
-                        { label: 'Two-Factor', href: '/profile/two-factor' },
                     ].map((item) => (
                         <Pressable
                             key={item.label}
@@ -73,14 +65,6 @@ export default function ProfileWorkspaceScreen() {
                             <AppText className="font-semibold" color={colors.textPrimary}>{item.label}</AppText>
                         </Pressable>
                     ))}
-
-                    <Pressable
-                        className="rounded-xl border px-4 py-3"
-                        style={{ borderColor: colors.error, backgroundColor: colors.backgroundAlt }}
-                        onPress={handleLogout}
-                    >
-                        <AppText className="text-center font-semibold" color={colors.error}>Logout</AppText>
-                    </Pressable>
                 </View>
             </ScrollView>
         </Screen>

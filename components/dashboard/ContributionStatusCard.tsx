@@ -1,22 +1,21 @@
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import React from 'react';
-import { useTranslation } from 'react-i18next';
 import { View } from 'react-native';
 
 import { useColors } from '@/config';
 import { ParticipationStats } from '@/data/participationStats.dummy';
-
+
 import AppText from '@/components/ui/AppText';
+
 interface ContributionStatusCardProps {
     stats: ParticipationStats;
 }
 
 const ContributionStatusCard = ({ stats }: ContributionStatusCardProps) => {
     const colors = useColors();
-    const { t, i18n } = useTranslation();
     const isPaid = stats.current_month_status === 'paid';
-    const currentMonth = new Date().toLocaleString(i18n.language || 'en', { month: 'long' });
+    const currentMonth = new Date().toLocaleString('en', { month: 'long' });
 
     return (
         <LinearGradient
@@ -28,11 +27,11 @@ const ContributionStatusCard = ({ stats }: ContributionStatusCardProps) => {
         >
             <View className="flex-row items-center justify-between mb-4">
                 <AppText className="text-lg font-bold">
-                    {t('{{month}} Contribution', { month: currentMonth })}
+                    {`${currentMonth} Contribution`}
                 </AppText>
                 <View className="bg-white/20 px-3 py-1 rounded-full">
                     <AppText className="text-xs font-bold uppercase">
-                        {isPaid ? t('Active') : t('Pending')}
+                        {isPaid ? 'Active' : 'Pending'}
                     </AppText>
                 </View>
             </View>
@@ -40,21 +39,19 @@ const ContributionStatusCard = ({ stats }: ContributionStatusCardProps) => {
             <View className="flex-row items-center mb-4">
                 <View className={`w-12 h-12 rounded-full items-center justify-center mr-4 ${isPaid ? 'bg-white/20' : 'bg-black/10'}`}>
                     <Ionicons
-                        name={isPaid ? "checkmark-circle" : "time"}
+                        name={isPaid ? 'checkmark-circle' : 'time'}
                         size={28}
                         color="#FFFFFF"
                     />
                 </View>
                 <View>
                     <AppText className="text-3xl font-bold">
-                        {isPaid ? t("You're In!") : t('Due Soon')}
+                        {isPaid ? "You're In!" : 'Due Soon'}
                     </AppText>
                     <AppText className="text-sm">
                         {isPaid
-                            ? t('Contribution received. Good luck!')
-                            : t('Payment due by {{date}}', {
-                                date: new Date(stats.next_payment_due_date).toLocaleDateString()
-                            })}
+                            ? 'Contribution received. Good luck!'
+                            : `Payment due by ${new Date(stats.next_payment_due_date).toLocaleDateString()}`}
                     </AppText>
                 </View>
             </View>
@@ -63,7 +60,7 @@ const ContributionStatusCard = ({ stats }: ContributionStatusCardProps) => {
                 <View className="bg-black/10 rounded-xl p-3 flex-row items-center">
                     <Ionicons name="ticket-outline" size={20} color="#FFFFFF" />
                     <AppText className="ml-2 flex-1">
-                        {t('Entry ID:')} <AppText className="font-bold" disableTranslation>{stats.current_draw_entry_id}</AppText>
+                        Entry ID: <AppText className="font-bold" disableTranslation>{stats.current_draw_entry_id}</AppText>
                     </AppText>
                 </View>
             )}
@@ -72,4 +69,3 @@ const ContributionStatusCard = ({ stats }: ContributionStatusCardProps) => {
 };
 
 export default ContributionStatusCard;
-

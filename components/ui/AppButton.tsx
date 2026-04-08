@@ -97,7 +97,7 @@ const AppButton: React.FC<AppButtonProps> = ({
         const variantStyles: Record<ButtonVariant, TextStyle> = {
             primary: { color: colors.white },
             secondary: { color: colors.white },
-            outline: { color: colors.white },
+            outline: { color: colors.textPrimary },
             danger: { color: colors.white },
             ghost: { color: colors.accent },
         };

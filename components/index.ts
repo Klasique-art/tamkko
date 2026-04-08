@@ -15,6 +15,9 @@ export { default as CustomTabBar } from './layout/CustomTabBar';
 // Feature Scaffolding
 export * from './scaffold';
 
+// Feed Components
+export * from './feed';
+
 // Home/Dashboard Components
 export * from './home';
 

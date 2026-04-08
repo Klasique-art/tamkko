@@ -1,55 +1,105 @@
-﻿import { Href, router } from 'expo-router';
+import { Href, router } from 'expo-router';
+import { FormikHelpers, useFormikContext } from 'formik';
 import React from 'react';
-import { Pressable, View } from 'react-native';
 
-import Screen from '@/components/ui/Screen';
-import AppText from '@/components/ui/AppText';
-import { useColors } from '@/config/colors';
+import { AuthLinkRow, AuthShell, FormStatusMessage } from '@/components/auth';
+import AppErrorMessage from '@/components/form/AppErrorMessage';
+import { AppForm, AppFormField, FormLoader, SubmitButton } from '@/components/form';
+import ToggleField from '@/components/form/ToggleField';
+import { SignupFormValues, SignupValidationSchema } from '@/data/authValidation';
 import { useAuth } from '@/context/AuthContext';
+import { delay } from '@/lib/utils/delay';
+
+const initialValues: SignupFormValues = {
+    email: '',
+    phone: '',
+    password: '',
+    confirm_password: '',
+    first_name: '',
+    last_name: '',
+    date_of_birth: '',
+    agree_to_terms: false,
+};
+
+function TermsErrorMessage() {
+    const { errors, touched } = useFormikContext<SignupFormValues>();
+    return <AppErrorMessage error={errors.agree_to_terms} visible={Boolean(touched.agree_to_terms)} />;
+}
 
 export default function RegisterScreen() {
-    const colors = useColors();
     const { signup } = useAuth();
+    const [loadingVisible, setLoadingVisible] = React.useState(false);
 
-    const handleMockRegister = async () => {
-        await signup({
-            email: 'new.user@tamkko.app',
-            password: 'MockPassword1!',
-            re_password: 'MockPassword1!',
-            first_name: 'New',
-            last_name: 'User',
-            phone: '+233200000000',
-            date_of_birth: '2000-01-01',
-            agree_to_terms: true,
-        });
+    const handleSubmit = async (
+        values: SignupFormValues,
+        { setStatus, setSubmitting }: FormikHelpers<SignupFormValues>
+    ) => {
+        setStatus(undefined);
+        setLoadingVisible(true);
 
-        router.replace('/(auth)/verify-email' as Href);
+        try {
+            await delay(1400);
+            await signup({
+                email: values.email.trim().toLowerCase(),
+                phone: values.phone.trim(),
+                password: values.password,
+                re_password: values.confirm_password,
+                first_name: values.first_name.trim(),
+                last_name: values.last_name.trim(),
+                date_of_birth: values.date_of_birth,
+                agree_to_terms: values.agree_to_terms,
+            });
+
+            router.push({ pathname: '/(auth)/verify-email', params: { email: values.email.trim().toLowerCase() } });
+        } catch {
+            setStatus({ error: 'Unable to create your account right now. Please try again.' });
+        } finally {
+            setLoadingVisible(false);
+            setSubmitting(false);
+        }
     };
 
     return (
-        <Screen className="pt-4">
-            <View className="flex-1 justify-center rounded-2xl border p-5" style={{ borderColor: colors.border, backgroundColor: colors.backgroundAlt }}>
-                <AppText className="text-2xl font-bold" color={colors.textPrimary}>Register</AppText>
-                <AppText className="mt-2 text-sm" color={colors.textSecondary}>
-                    Simulation mode: creates a local pending user and proceeds to OTP step.
-                </AppText>
+        <AuthShell
+            title="Create Account"
+            subtitle="Set up your profile so you can follow creators and unlock all community features."
+            footer={<AuthLinkRow prompt="Already have an account?" actionLabel="Log in" href={'/(auth)/login' as Href} />}
+        >
+            <AppForm initialValues={initialValues} validationSchema={SignupValidationSchema} onSubmit={handleSubmit}>
+                <AppFormField<SignupFormValues> name="first_name" label="First Name" placeholder="First name" required />
+                <AppFormField<SignupFormValues> name="last_name" label="Last Name" placeholder="Last name" required />
+                <AppFormField<SignupFormValues> name="email" label="Email" placeholder="name@example.com" type="email" required />
+                <AppFormField<SignupFormValues> name="phone" label="Phone" placeholder="+233xxxxxxxxx" type="tel" required />
+                <AppFormField<SignupFormValues> name="date_of_birth" label="Date of Birth" type="date" required />
+                <AppFormField<SignupFormValues>
+                    name="password"
+                    label="Password"
+                    placeholder="Create a strong password"
+                    type="password"
+                    required
+                    icon="eye"
+                    iconAria="Toggle password visibility"
+                />
+                <AppFormField<SignupFormValues>
+                    name="confirm_password"
+                    label="Confirm Password"
+                    placeholder="Re-enter password"
+                    type="password"
+                    required
+                    icon="eye"
+                    iconAria="Toggle password visibility"
+                />
 
-                <Pressable
-                    className="mt-5 rounded-xl px-4 py-3"
-                    style={{ backgroundColor: colors.textPrimary }}
-                    onPress={handleMockRegister}
-                >
-                    <AppText className="text-center font-semibold" color={colors.background}>Register (Mock)</AppText>
-                </Pressable>
-
-                <Pressable
-                    className="mt-3 rounded-xl border px-4 py-3"
-                    style={{ borderColor: colors.border }}
-                    onPress={() => router.push('/(auth)/login' as Href)}
-                >
-                    <AppText className="text-center font-semibold" color={colors.textPrimary}>Back To Login</AppText>
-                </Pressable>
-            </View>
-        </Screen>
+                <ToggleField
+                    name="agree_to_terms"
+                    label="I agree to Terms & Privacy"
+                    description="You must agree before creating an account."
+                />
+                <TermsErrorMessage />
+                <FormStatusMessage />
+                <SubmitButton title="Create Account" />
+                <FormLoader visible={loadingVisible} message="Creating account" />
+            </AppForm>
+        </AuthShell>
     );
 }
