@@ -2,13 +2,13 @@ import { Ionicons } from '@expo/vector-icons';
 import { FlashList } from '@shopify/flash-list';
 import { Href, router } from 'expo-router';
 import React from 'react';
-import { ActivityIndicator, Image, Pressable, TextInput, View } from 'react-native';
+import { ActivityIndicator, Image, Pressable, RefreshControl, TextInput, View } from 'react-native';
 
 import AppText from '@/components/ui/AppText';
 import Screen from '@/components/ui/Screen';
 import { useColors } from '@/config/colors';
-import { MockSubscriber } from '@/data/mock/subscribers';
-import { subscribersService } from '@/lib/services/subscribersService';
+import { useToast } from '@/context/ToastContext';
+import { SubscriberItem, subscribersService } from '@/lib/services/subscribersService';
 
 const compact = (value: number) =>
     new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(value);
@@ -16,7 +16,7 @@ const compact = (value: number) =>
 const formatDate = (isoDate: string) =>
     new Date(isoDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
-const statusMeta: Record<MockSubscriber['status'], { label: string; bg: string }> = {
+const statusMeta: Record<SubscriberItem['status'], { label: string; bg: string }> = {
     active: { label: 'Active', bg: 'rgba(26,118,13,0.18)' },
     cancelled: { label: 'Cancelled', bg: 'rgba(248,183,53,0.24)' },
     expired: { label: 'Expired', bg: 'rgba(120,120,120,0.24)' },
@@ -24,11 +24,13 @@ const statusMeta: Record<MockSubscriber['status'], { label: string; bg: string }
 
 export default function SubscribersScreen() {
     const colors = useColors();
+    const { showToast } = useToast();
     const [query, setQuery] = React.useState('');
     const [debouncedQuery, setDebouncedQuery] = React.useState('');
     const [loading, setLoading] = React.useState(true);
     const [loadingMore, setLoadingMore] = React.useState(false);
-    const [subscribers, setSubscribers] = React.useState<MockSubscriber[]>([]);
+    const [refreshing, setRefreshing] = React.useState(false);
+    const [subscribers, setSubscribers] = React.useState<SubscriberItem[]>([]);
     const [nextCursor, setNextCursor] = React.useState<string | null>(null);
     const [hasMore, setHasMore] = React.useState(false);
     const [totalCount, setTotalCount] = React.useState(0);
@@ -42,17 +44,26 @@ export default function SubscribersScreen() {
 
     const loadFirstPage = React.useCallback(async () => {
         setLoading(true);
-        const page = await subscribersService.getMySubscribersPage({
-            cursor: null,
-            limit: 24,
-            query: debouncedQuery,
-        });
-        setSubscribers(page.items);
-        setNextCursor(page.nextCursor);
-        setHasMore(page.hasMore);
-        setTotalCount(page.totalCount);
-        setLoading(false);
-    }, [debouncedQuery]);
+        try {
+            const page = await subscribersService.getMySubscribersPage({
+                cursor: null,
+                limit: 24,
+                query: debouncedQuery,
+            });
+            setSubscribers(page.items);
+            setNextCursor(page.nextCursor);
+            setHasMore(page.hasMore);
+            setTotalCount(page.totalCount);
+        } catch (error: any) {
+            setSubscribers([]);
+            setNextCursor(null);
+            setHasMore(false);
+            setTotalCount(0);
+            showToast(error?.message || 'Could not load subscribers.', { variant: 'error' });
+        } finally {
+            setLoading(false);
+        }
+    }, [debouncedQuery, showToast]);
 
     React.useEffect(() => {
         void loadFirstPage();
@@ -61,25 +72,36 @@ export default function SubscribersScreen() {
     const loadMore = React.useCallback(async () => {
         if (loading || loadingMore || !hasMore || !nextCursor) return;
         setLoadingMore(true);
-        const page = await subscribersService.getMySubscribersPage({
-            cursor: nextCursor,
-            limit: 24,
-            query: debouncedQuery,
-        });
-        setSubscribers((current) => [...current, ...page.items]);
-        setNextCursor(page.nextCursor);
-        setHasMore(page.hasMore);
-        setLoadingMore(false);
-    }, [debouncedQuery, hasMore, loading, loadingMore, nextCursor]);
+        try {
+            const page = await subscribersService.getMySubscribersPage({
+                cursor: nextCursor,
+                limit: 24,
+                query: debouncedQuery,
+            });
+            setSubscribers((current) => [...current, ...page.items]);
+            setNextCursor(page.nextCursor);
+            setHasMore(page.hasMore);
+        } catch (error: any) {
+            showToast(error?.message || 'Could not load more subscribers.', { variant: 'error' });
+        } finally {
+            setLoadingMore(false);
+        }
+    }, [debouncedQuery, hasMore, loading, loadingMore, nextCursor, showToast]);
+
+    const onRefresh = React.useCallback(async () => {
+        setRefreshing(true);
+        await loadFirstPage();
+        setRefreshing(false);
+    }, [loadFirstPage]);
 
     const openCreator = React.useCallback((username: string) => {
         const cleaned = username.replace(/^@/, '').trim();
         router.push(`/video/creator/${encodeURIComponent(cleaned)}` as Href);
     }, []);
 
-    const SubscriberItem = React.useMemo(
+    const SubscriberRow = React.useMemo(
         () =>
-            React.memo(function SubscriberItemRow({ item }: { item: MockSubscriber }) {
+            React.memo(function SubscriberItemRow({ item }: { item: SubscriberItem }) {
                 const meta = statusMeta[item.status];
                 return (
                     <Pressable
@@ -166,10 +188,18 @@ export default function SubscribersScreen() {
                 data={subscribers}
                 keyExtractor={(item) => item.id}
                 contentContainerStyle={{ paddingTop: 12, paddingBottom: 120 }}
-                renderItem={({ item }) => <SubscriberItem item={item} />}
+                renderItem={({ item }) => <SubscriberRow item={item} />}
                 onEndReached={loadMore}
                 onEndReachedThreshold={0.65}
                 removeClippedSubviews
+                refreshControl={
+                    <RefreshControl
+                        refreshing={refreshing}
+                        onRefresh={onRefresh}
+                        tintColor={colors.primary}
+                        colors={[colors.primary]}
+                    />
+                }
                 ListEmptyComponent={
                     !loading ? (
                         <View className="items-center rounded-2xl border px-4 py-7" style={{ borderColor: colors.border, backgroundColor: colors.backgroundAlt }}>

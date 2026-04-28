@@ -2,11 +2,12 @@ import { Ionicons } from '@expo/vector-icons';
 import { FlashList } from '@shopify/flash-list';
 import { Href, router } from 'expo-router';
 import React from 'react';
-import { ActivityIndicator, Image, Pressable, TextInput, View } from 'react-native';
+import { ActivityIndicator, Image, Pressable, RefreshControl, TextInput, View } from 'react-native';
 
 import AppText from '@/components/ui/AppText';
 import Screen from '@/components/ui/Screen';
 import { useColors } from '@/config/colors';
+import { useToast } from '@/context/ToastContext';
 import { FollowingListItem, followingService } from '@/lib/services/followingService';
 
 const compact = (value: number) =>
@@ -17,10 +18,12 @@ const formatFollowedSince = (isoDate: string) =>
 
 export default function FollowingScreen() {
     const colors = useColors();
+    const { showToast } = useToast();
     const [query, setQuery] = React.useState('');
     const [debouncedQuery, setDebouncedQuery] = React.useState('');
     const [loading, setLoading] = React.useState(true);
     const [loadingMore, setLoadingMore] = React.useState(false);
+    const [refreshing, setRefreshing] = React.useState(false);
     const [following, setFollowing] = React.useState<FollowingListItem[]>([]);
     const [nextCursor, setNextCursor] = React.useState<string | null>(null);
     const [hasMore, setHasMore] = React.useState(false);
@@ -35,17 +38,26 @@ export default function FollowingScreen() {
 
     const loadFirstPage = React.useCallback(async () => {
         setLoading(true);
-        const page = await followingService.getMyFollowingPage({
-            cursor: null,
-            limit: 24,
-            query: debouncedQuery,
-        });
-        setFollowing(page.items);
-        setNextCursor(page.nextCursor);
-        setHasMore(page.hasMore);
-        setTotalCount(page.totalCount);
-        setLoading(false);
-    }, [debouncedQuery]);
+        try {
+            const page = await followingService.getMyFollowingPage({
+                cursor: null,
+                limit: 24,
+                query: debouncedQuery,
+            });
+            setFollowing(page.items);
+            setNextCursor(page.nextCursor);
+            setHasMore(page.hasMore);
+            setTotalCount(page.totalCount);
+        } catch (error: any) {
+            setFollowing([]);
+            setNextCursor(null);
+            setHasMore(false);
+            setTotalCount(0);
+            showToast(error?.message || 'Could not load following list.', { variant: 'error' });
+        } finally {
+            setLoading(false);
+        }
+    }, [debouncedQuery, showToast]);
 
     React.useEffect(() => {
         void loadFirstPage();
@@ -54,16 +66,27 @@ export default function FollowingScreen() {
     const loadMore = React.useCallback(async () => {
         if (loading || loadingMore || !hasMore || !nextCursor) return;
         setLoadingMore(true);
-        const page = await followingService.getMyFollowingPage({
-            cursor: nextCursor,
-            limit: 24,
-            query: debouncedQuery,
-        });
-        setFollowing((current) => [...current, ...page.items]);
-        setNextCursor(page.nextCursor);
-        setHasMore(page.hasMore);
-        setLoadingMore(false);
-    }, [debouncedQuery, hasMore, loading, loadingMore, nextCursor]);
+        try {
+            const page = await followingService.getMyFollowingPage({
+                cursor: nextCursor,
+                limit: 24,
+                query: debouncedQuery,
+            });
+            setFollowing((current) => [...current, ...page.items]);
+            setNextCursor(page.nextCursor);
+            setHasMore(page.hasMore);
+        } catch (error: any) {
+            showToast(error?.message || 'Could not load more following.', { variant: 'error' });
+        } finally {
+            setLoadingMore(false);
+        }
+    }, [debouncedQuery, hasMore, loading, loadingMore, nextCursor, showToast]);
+
+    const onRefresh = React.useCallback(async () => {
+        setRefreshing(true);
+        await loadFirstPage();
+        setRefreshing(false);
+    }, [loadFirstPage]);
 
     const openCreator = React.useCallback((username: string) => {
         const cleaned = username.replace(/^@/, '').trim();
@@ -160,6 +183,14 @@ export default function FollowingScreen() {
                 onEndReached={loadMore}
                 onEndReachedThreshold={0.65}
                 removeClippedSubviews
+                refreshControl={
+                    <RefreshControl
+                        refreshing={refreshing}
+                        onRefresh={onRefresh}
+                        tintColor={colors.primary}
+                        colors={[colors.primary]}
+                    />
+                }
                 ListEmptyComponent={
                     !loading ? (
                         <View className="items-center rounded-2xl border px-4 py-7" style={{ borderColor: colors.border, backgroundColor: colors.backgroundAlt }}>

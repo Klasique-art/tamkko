@@ -15,8 +15,6 @@ export default function AccountSettingsScreen() {
     const { user } = useAuth();
     const { showToast } = useToast();
     const [state, setState] = React.useState<AccountSettingsState | null>(null);
-    const [email, setEmail] = React.useState('');
-    const [phone, setPhone] = React.useState('');
     const [deactivateVisible, setDeactivateVisible] = React.useState(false);
     const [deleteVisible, setDeleteVisible] = React.useState(false);
     const [deleteText, setDeleteText] = React.useState('');
@@ -24,24 +22,11 @@ export default function AccountSettingsScreen() {
     const load = React.useCallback(async () => {
         const next = await mockProfileSecurityService.load(user);
         setState(next.account);
-        setEmail(next.account.email);
-        setPhone(next.account.phone);
     }, [user]);
 
     React.useEffect(() => {
         void load();
     }, [load]);
-
-    const save = async () => {
-        if (!state) return;
-        const next = await mockProfileSecurityService.updateAccountSettings(user, {
-            ...state,
-            email: email.trim(),
-            phone: phone.trim(),
-        });
-        setState(next);
-        showToast('Account settings updated.', { variant: 'success', duration: 1400 });
-    };
 
     const deactivate = async () => {
         const next = await mockProfileSecurityService.deactivateAccount(user, 'user_action');
@@ -66,45 +51,6 @@ export default function AccountSettingsScreen() {
         <Screen title="Account Settings" className="pt-3">
             <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 120 }}>
                 <View className="rounded-3xl border p-4" style={{ borderColor: colors.border, backgroundColor: colors.backgroundAlt }}>
-                    <AppText className="text-lg font-black" color={colors.textPrimary}>Account Details</AppText>
-                    <AppText className="mt-1 text-xs" color={colors.textSecondary}>
-                        Status: {state?.accountState ?? 'active'}
-                    </AppText>
-
-                    <AppText className="mt-3 text-sm font-semibold" color={colors.textPrimary}>Email</AppText>
-                    <View className="mt-2 rounded-xl border px-3" style={{ borderColor: colors.border, backgroundColor: colors.background }}>
-                        <TextInput
-                            value={email}
-                            onChangeText={setEmail}
-                            autoCapitalize="none"
-                            style={{ color: colors.textPrimary, paddingVertical: 12 }}
-                            accessibilityLabel="Account email"
-                        />
-                    </View>
-
-                    <AppText className="mt-3 text-sm font-semibold" color={colors.textPrimary}>Phone</AppText>
-                    <View className="mt-2 rounded-xl border px-3" style={{ borderColor: colors.border, backgroundColor: colors.background }}>
-                        <TextInput
-                            value={phone}
-                            onChangeText={setPhone}
-                            keyboardType="phone-pad"
-                            style={{ color: colors.textPrimary, paddingVertical: 12 }}
-                            accessibilityLabel="Account phone number"
-                        />
-                    </View>
-
-                    <Pressable
-                        onPress={() => void save()}
-                        className="mt-3 rounded-xl border py-3"
-                        style={{ borderColor: colors.border, backgroundColor: colors.background }}
-                        accessibilityRole="button"
-                        accessibilityLabel="Save account settings"
-                    >
-                        <AppText className="text-center text-sm font-semibold" color={colors.textPrimary}>Save Account Changes</AppText>
-                    </Pressable>
-                </View>
-
-                <View className="mt-4 rounded-3xl border p-4" style={{ borderColor: colors.border, backgroundColor: colors.backgroundAlt }}>
                     <AppText className="text-base font-bold" color={colors.textPrimary}>Privacy & Discovery</AppText>
 
                     <View className="mt-3 rounded-xl border px-3 py-3" style={{ borderColor: colors.border, backgroundColor: colors.background }}>

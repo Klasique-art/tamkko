@@ -12,7 +12,7 @@ import { useAuth } from '@/context/AuthContext';
 const settingItems: { label: string; subtitle: string; href: Href }[] = [
     {
         label: 'Account Settings',
-        subtitle: 'Email, phone number, and account preferences.',
+        subtitle: 'Account-level preferences and controls.',
         href: '/profile/account-settings' as Href,
     },
     {

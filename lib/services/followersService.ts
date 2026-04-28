@@ -1,52 +1,87 @@
-import { mockMyFollowers, MockFollower } from '@/data/mock/followers';
+import client from '@/lib/client';
 
-const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-const byMostRecentFollow = (a: MockFollower, b: MockFollower) =>
-    new Date(b.followedSince).getTime() - new Date(a.followedSince).getTime();
+export type FollowerItem = {
+    id: string;
+    username: string;
+    displayName: string;
+    avatarUrl: string;
+    isVerified: boolean;
+    followedAt: string;
+    bio: string;
+    followersCount: number;
+};
 
 export type FollowersPageResult = {
-    items: MockFollower[];
+    items: FollowerItem[];
     nextCursor: string | null;
     hasMore: boolean;
     totalCount: number;
 };
 
-export const followersService = {
-    async getMyFollowers(): Promise<MockFollower[]> {
-        await delay(140);
-        return [...mockMyFollowers].sort(byMostRecentFollow);
-    },
+const toNumber = (value: unknown, fallback = 0) => {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : fallback;
+};
 
+const normalizeFollower = (raw: any): FollowerItem => ({
+    id: String(raw?.id ?? raw?._id ?? ''),
+    username: String(raw?.username ?? ''),
+    displayName: String(raw?.display_name ?? raw?.displayName ?? ''),
+    avatarUrl: String(raw?.avatar_url ?? raw?.avatarUrl ?? ''),
+    isVerified: Boolean(raw?.is_verified ?? raw?.isVerified),
+    followedAt: String(raw?.followed_at ?? raw?.followedAt ?? new Date().toISOString()),
+    bio: String(raw?.bio ?? ''),
+    followersCount: toNumber(raw?.followers_count ?? raw?.followersCount ?? 0),
+});
+
+export const followersService = {
     async getMyFollowersPage(params: {
         cursor?: string | null;
         limit?: number;
         query?: string;
     }): Promise<FollowersPageResult> {
         const { cursor = null, limit = 24, query = '' } = params;
-        await delay(120);
 
-        const normalized = query.trim().toLowerCase();
-        const source = [...mockMyFollowers].sort(byMostRecentFollow);
-        const filtered = normalized
-            ? source.filter(
-                (item) =>
-                    item.username.toLowerCase().includes(normalized) ||
-                    item.displayName.toLowerCase().includes(normalized)
-            )
-            : source;
+        const response = await client.get('/users/me/followers', {
+            params: {
+                ...(cursor ? { cursor } : {}),
+                limit,
+                ...(query.trim() ? { q: query.trim() } : {}),
+            },
+        });
 
-        const startIndex = cursor ? Number(cursor) : 0;
-        const safeStart = Number.isFinite(startIndex) && startIndex >= 0 ? startIndex : 0;
-        const slice = filtered.slice(safeStart, safeStart + limit);
-        const nextIndex = safeStart + slice.length;
-        const hasMore = nextIndex < filtered.length;
+        const payload = response.data as {
+            data?: {
+                total_followers_count?: number;
+                totalCount?: number;
+                count?: number;
+                followers?: any[];
+                items?: any[];
+                next_cursor?: string | null;
+                nextCursor?: string | null;
+                has_more?: boolean;
+                hasMore?: boolean;
+            };
+        };
+
+        const data = payload?.data ?? {};
+        const rawItems = (data.followers ?? data.items ?? []) as any[];
+        const items = rawItems.map(normalizeFollower).filter((item) => item.id && item.username);
+        const nextCursor = (data.next_cursor ?? data.nextCursor ?? null) as string | null;
+        const hasMoreFromApi = data.has_more ?? data.hasMore;
+        const hasMore = typeof hasMoreFromApi === 'boolean' ? hasMoreFromApi : Boolean(nextCursor);
+
+        const totalCount = toNumber(
+            data.total_followers_count ?? data.totalCount ?? data.count,
+            items.length
+        );
 
         return {
-            items: slice,
-            nextCursor: hasMore ? String(nextIndex) : null,
+            items,
+            nextCursor,
             hasMore,
-            totalCount: filtered.length,
+            totalCount,
         };
     },
 };
+

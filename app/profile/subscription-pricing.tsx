@@ -5,46 +5,71 @@ import { Pressable, TextInput, View } from 'react-native';
 import AppText from '@/components/ui/AppText';
 import Screen from '@/components/ui/Screen';
 import { useColors } from '@/config/colors';
+import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/context/ToastContext';
 import { subscriptionPricingService } from '@/lib/services/subscriptionPricingService';
 
-const MY_CREATOR_USERNAME = 'klasique';
 const QUICK_PRICES = [10, 15, 20, 25, 30, 40];
 
 const clampPrice = (value: number) => Math.max(5, Math.min(500, Number(value.toFixed(2))));
 
 export default function SubscriptionPricingScreen() {
     const colors = useColors();
+    const { user } = useAuth();
     const { showToast } = useToast();
     const [loading, setLoading] = React.useState(true);
-    const [priceInput, setPriceInput] = React.useState('20');
+    const [priceInput, setPriceInput] = React.useState('');
     const [saving, setSaving] = React.useState(false);
+    const username = user?.username?.trim().toLowerCase() || '';
 
     React.useEffect(() => {
         let mounted = true;
-        subscriptionPricingService.getPrice(MY_CREATOR_USERNAME).then((price) => {
-            if (!mounted) return;
-            setPriceInput(price.toFixed(2));
-            setLoading(false);
-        });
+        const load = async () => {
+            if (!username) {
+                if (mounted) setLoading(false);
+                return;
+            }
+            try {
+                const price = await subscriptionPricingService.getPrice();
+                if (!mounted) return;
+                setPriceInput(price.toFixed(2));
+            } catch (error: any) {
+                if (!mounted) return;
+                showToast(
+                    error?.message || 'Could not load subscription price from backend.',
+                    { variant: 'error' }
+                );
+            } finally {
+                if (mounted) setLoading(false);
+            }
+        };
+        void load();
         return () => {
             mounted = false;
         };
-    }, []);
+    }, [showToast, username]);
 
     const parsedPrice = Number(priceInput);
-    const hasValidPrice = Number.isFinite(parsedPrice) && parsedPrice >= 5 && parsedPrice <= 500;
+    const hasValidPrice = Boolean(username) && Number.isFinite(parsedPrice) && parsedPrice >= 5 && parsedPrice <= 500;
 
     const handleSave = async () => {
         if (!hasValidPrice || saving) return;
         setSaving(true);
-        const saved = await subscriptionPricingService.setPrice(MY_CREATOR_USERNAME, clampPrice(parsedPrice));
-        setPriceInput(saved.toFixed(2));
-        setSaving(false);
-        showToast(`Subscription price saved: GHS ${saved.toFixed(2)}/month`, {
-            variant: 'success',
-            duration: 2600,
-        });
+        try {
+            const saved = await subscriptionPricingService.setPrice(clampPrice(parsedPrice));
+            setPriceInput(saved.toFixed(2));
+            showToast(`Subscription price saved: GHS ${saved.toFixed(2)}/month`, {
+                variant: 'success',
+                duration: 2600,
+            });
+        } catch (error: any) {
+            showToast(
+                error?.message || 'Could not save subscription price to backend.',
+                { variant: 'error' }
+            );
+        } finally {
+            setSaving(false);
+        }
     };
 
     if (loading) {
@@ -68,6 +93,11 @@ export default function SubscriptionPricingScreen() {
                 <AppText className="mt-1 text-sm" color={colors.textSecondary}>
                     This price is used when viewers subscribe to unlock all your premium videos.
                 </AppText>
+                {!username ? (
+                    <AppText className="mt-2 text-xs" color={colors.error}>
+                        Could not detect your username from account profile.
+                    </AppText>
+                ) : null}
 
                 <View className="mt-4 rounded-2xl border px-3 py-2" style={{ borderColor: colors.border, backgroundColor: colors.background }}>
                     <AppText className="text-xs font-semibold" color={colors.textSecondary}>

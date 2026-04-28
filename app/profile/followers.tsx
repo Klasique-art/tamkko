@@ -2,13 +2,13 @@ import { Ionicons } from '@expo/vector-icons';
 import { FlashList } from '@shopify/flash-list';
 import { Href, router } from 'expo-router';
 import React from 'react';
-import { ActivityIndicator, Image, Pressable, TextInput, View } from 'react-native';
+import { ActivityIndicator, Image, Pressable, RefreshControl, TextInput, View } from 'react-native';
 
 import AppText from '@/components/ui/AppText';
 import Screen from '@/components/ui/Screen';
 import { useColors } from '@/config/colors';
-import { MockFollower } from '@/data/mock/followers';
-import { followersService } from '@/lib/services/followersService';
+import { useToast } from '@/context/ToastContext';
+import { FollowerItem, followersService } from '@/lib/services/followersService';
 
 const compact = (value: number) =>
     new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(value);
@@ -18,11 +18,13 @@ const formatFollowedSince = (isoDate: string) =>
 
 export default function FollowersScreen() {
     const colors = useColors();
+    const { showToast } = useToast();
     const [query, setQuery] = React.useState('');
     const [debouncedQuery, setDebouncedQuery] = React.useState('');
     const [loading, setLoading] = React.useState(true);
     const [loadingMore, setLoadingMore] = React.useState(false);
-    const [followers, setFollowers] = React.useState<MockFollower[]>([]);
+    const [refreshing, setRefreshing] = React.useState(false);
+    const [followers, setFollowers] = React.useState<FollowerItem[]>([]);
     const [nextCursor, setNextCursor] = React.useState<string | null>(null);
     const [hasMore, setHasMore] = React.useState(false);
     const [totalCount, setTotalCount] = React.useState(0);
@@ -36,17 +38,26 @@ export default function FollowersScreen() {
 
     const loadFirstPage = React.useCallback(async () => {
         setLoading(true);
-        const page = await followersService.getMyFollowersPage({
-            cursor: null,
-            limit: 24,
-            query: debouncedQuery,
-        });
-        setFollowers(page.items);
-        setNextCursor(page.nextCursor);
-        setHasMore(page.hasMore);
-        setTotalCount(page.totalCount);
-        setLoading(false);
-    }, [debouncedQuery]);
+        try {
+            const page = await followersService.getMyFollowersPage({
+                cursor: null,
+                limit: 24,
+                query: debouncedQuery,
+            });
+            setFollowers(page.items);
+            setNextCursor(page.nextCursor);
+            setHasMore(page.hasMore);
+            setTotalCount(page.totalCount);
+        } catch (error: any) {
+            setFollowers([]);
+            setNextCursor(null);
+            setHasMore(false);
+            setTotalCount(0);
+            showToast(error?.message || 'Could not load followers.', { variant: 'error' });
+        } finally {
+            setLoading(false);
+        }
+    }, [debouncedQuery, showToast]);
 
     React.useEffect(() => {
         void loadFirstPage();
@@ -55,25 +66,36 @@ export default function FollowersScreen() {
     const loadMore = React.useCallback(async () => {
         if (loading || loadingMore || !hasMore || !nextCursor) return;
         setLoadingMore(true);
-        const page = await followersService.getMyFollowersPage({
-            cursor: nextCursor,
-            limit: 24,
-            query: debouncedQuery,
-        });
-        setFollowers((current) => [...current, ...page.items]);
-        setNextCursor(page.nextCursor);
-        setHasMore(page.hasMore);
-        setLoadingMore(false);
-    }, [debouncedQuery, hasMore, loading, loadingMore, nextCursor]);
+        try {
+            const page = await followersService.getMyFollowersPage({
+                cursor: nextCursor,
+                limit: 24,
+                query: debouncedQuery,
+            });
+            setFollowers((current) => [...current, ...page.items]);
+            setNextCursor(page.nextCursor);
+            setHasMore(page.hasMore);
+        } catch (error: any) {
+            showToast(error?.message || 'Could not load more followers.', { variant: 'error' });
+        } finally {
+            setLoadingMore(false);
+        }
+    }, [debouncedQuery, hasMore, loading, loadingMore, nextCursor, showToast]);
+
+    const onRefresh = React.useCallback(async () => {
+        setRefreshing(true);
+        await loadFirstPage();
+        setRefreshing(false);
+    }, [loadFirstPage]);
 
     const openCreator = React.useCallback((username: string) => {
         const cleaned = username.replace(/^@/, '').trim();
         router.push(`/video/creator/${encodeURIComponent(cleaned)}` as Href);
     }, []);
 
-    const FollowerItem = React.useMemo(
+    const FollowerRow = React.useMemo(
         () =>
-            React.memo(function FollowerItemRow({ item }: { item: MockFollower }) {
+            React.memo(function FollowerItemRow({ item }: { item: FollowerItem }) {
                 return (
                     <Pressable
                         onPress={() => openCreator(item.username)}
@@ -81,7 +103,7 @@ export default function FollowersScreen() {
                         style={{ borderColor: colors.border, backgroundColor: colors.backgroundAlt }}
                         accessibilityRole="button"
                         accessibilityLabel={`Open ${item.username} profile`}
-                        accessibilityHint={`Followed since ${formatFollowedSince(item.followedSince)}`}
+                        accessibilityHint={`Followed since ${formatFollowedSince(item.followedAt)}`}
                     >
                         <Image
                             source={{ uri: item.avatarUrl }}
@@ -109,7 +131,7 @@ export default function FollowersScreen() {
                         <View className="items-end">
                             <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
                             <AppText className="mt-1 text-[10px]" color={colors.textSecondary}>
-                                {formatFollowedSince(item.followedSince)}
+                                {formatFollowedSince(item.followedAt)}
                             </AppText>
                         </View>
                     </Pressable>
@@ -157,10 +179,18 @@ export default function FollowersScreen() {
                 data={followers}
                 keyExtractor={(item) => item.id}
                 contentContainerStyle={{ paddingTop: 12, paddingBottom: 120 }}
-                renderItem={({ item }) => <FollowerItem item={item} />}
+                renderItem={({ item }) => <FollowerRow item={item} />}
                 onEndReached={loadMore}
                 onEndReachedThreshold={0.65}
                 removeClippedSubviews
+                refreshControl={
+                    <RefreshControl
+                        refreshing={refreshing}
+                        onRefresh={onRefresh}
+                        tintColor={colors.primary}
+                        colors={[colors.primary]}
+                    />
+                }
                 ListEmptyComponent={
                     !loading ? (
                         <View className="items-center rounded-2xl border px-4 py-7" style={{ borderColor: colors.border, backgroundColor: colors.backgroundAlt }}>

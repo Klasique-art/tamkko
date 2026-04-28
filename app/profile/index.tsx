@@ -1,4 +1,5 @@
 import { Href, router } from 'expo-router';
+import { Image } from 'expo-image';
 import React from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
 
@@ -10,6 +11,7 @@ import { useAuth } from '@/context/AuthContext';
 export default function ProfileWorkspaceScreen() {
     const colors = useColors();
     const { isAuthenticated, user } = useAuth();
+    const avatarUrl = user?.profile?.avatarUrl || (user as any)?.profile_picture || '';
 
     if (!isAuthenticated) {
         return (
@@ -41,9 +43,23 @@ export default function ProfileWorkspaceScreen() {
     }
 
     return (
-        <Screen className="pt-4">
+        <Screen className="pt-4" title="Profile Workspace">
             <ScrollView contentContainerStyle={{ paddingBottom: 120 }} showsVerticalScrollIndicator={false}>
                 <View className="rounded-2xl border p-5" style={{ borderColor: colors.border, backgroundColor: colors.backgroundAlt }}>
+                    <View className="mb-3 h-20 w-20 overflow-hidden rounded-full border" style={{ borderColor: colors.border, backgroundColor: colors.background }}>
+                        {avatarUrl ? (
+                            <Image
+                                source={{ uri: avatarUrl }}
+                                style={{ width: '100%', height: '100%' }}
+                                contentFit="cover"
+                                cachePolicy="none"
+                            />
+                        ) : (
+                            <View className="h-full w-full items-center justify-center">
+                                <AppText className="text-xs font-semibold" color={colors.textSecondary}>No Image</AppText>
+                            </View>
+                        )}
+                    </View>
                     <AppText className="text-2xl font-bold" color={colors.textPrimary}>Profile</AppText>
                     <AppText className="mt-1 text-sm" color={colors.textSecondary}>
                         {(user?.profile?.displayName || user?.username || 'TAMKKO User')} - {user?.email}

@@ -1,5 +1,4 @@
-import { mockCreatorProfiles } from '@/data/mock/creators';
-import { getFollowedCreators, normalizeCreatorHandle } from '@/data/mock/following';
+import client from '@/lib/client';
 
 export type FollowingListItem = {
     id: string;
@@ -19,31 +18,21 @@ export type FollowingPageResult = {
     totalCount: number;
 };
 
-const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-const toDateStampByIndex = (index: number) => {
-    const base = new Date('2026-03-01T10:00:00Z').getTime();
-    const offsetDays = index * 7;
-    return new Date(base + offsetDays * 24 * 60 * 60 * 1000).toISOString();
+const toNumber = (value: unknown, fallback = 0) => {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : fallback;
 };
 
-const buildFollowingItems = (): FollowingListItem[] => {
-    const followed = getFollowedCreators();
-
-    return mockCreatorProfiles
-        .filter((creator) => followed.has(normalizeCreatorHandle(creator.username)))
-        .map((creator, index) => ({
-            id: creator.id,
-            username: normalizeCreatorHandle(creator.username),
-            displayName: creator.displayName,
-            bio: creator.bio,
-            avatarUrl: creator.avatarUrl,
-            followersCount: creator.followersCount,
-            isVerified: index < 2,
-            followedSince: toDateStampByIndex(index),
-        }))
-        .sort((a, b) => new Date(b.followedSince).getTime() - new Date(a.followedSince).getTime());
-};
+const normalizeFollowing = (raw: any): FollowingListItem => ({
+    id: String(raw?.id ?? raw?._id ?? ''),
+    username: String(raw?.username ?? ''),
+    displayName: String(raw?.display_name ?? raw?.displayName ?? ''),
+    avatarUrl: String(raw?.avatar_url ?? raw?.avatarUrl ?? ''),
+    isVerified: Boolean(raw?.is_verified ?? raw?.isVerified),
+    followedSince: String(raw?.followed_at ?? raw?.followedAt ?? new Date().toISOString()),
+    bio: String(raw?.bio ?? ''),
+    followersCount: toNumber(raw?.followers_count ?? raw?.followersCount ?? 0),
+});
 
 export const followingService = {
     async getMyFollowingPage(params: {
@@ -52,29 +41,47 @@ export const followingService = {
         query?: string;
     }): Promise<FollowingPageResult> {
         const { cursor = null, limit = 24, query = '' } = params;
-        await delay(120);
 
-        const normalized = query.trim().toLowerCase();
-        const source = buildFollowingItems();
-        const filtered = normalized
-            ? source.filter(
-                (item) =>
-                    item.username.toLowerCase().includes(normalized) ||
-                    item.displayName.toLowerCase().includes(normalized)
-            )
-            : source;
+        const response = await client.get('/users/me/following', {
+            params: {
+                ...(cursor ? { cursor } : {}),
+                limit,
+                ...(query.trim() ? { q: query.trim() } : {}),
+            },
+        });
 
-        const startIndex = cursor ? Number(cursor) : 0;
-        const safeStart = Number.isFinite(startIndex) && startIndex >= 0 ? startIndex : 0;
-        const slice = filtered.slice(safeStart, safeStart + limit);
-        const nextIndex = safeStart + slice.length;
-        const hasMore = nextIndex < filtered.length;
+        const payload = response.data as {
+            data?: {
+                total_following_count?: number;
+                totalCount?: number;
+                count?: number;
+                following?: any[];
+                items?: any[];
+                next_cursor?: string | null;
+                nextCursor?: string | null;
+                has_more?: boolean;
+                hasMore?: boolean;
+            };
+        };
+
+        const data = payload?.data ?? {};
+        const rawItems = (data.following ?? data.items ?? []) as any[];
+        const items = rawItems.map(normalizeFollowing).filter((item) => item.id && item.username);
+        const nextCursor = (data.next_cursor ?? data.nextCursor ?? null) as string | null;
+        const hasMoreFromApi = data.has_more ?? data.hasMore;
+        const hasMore = typeof hasMoreFromApi === 'boolean' ? hasMoreFromApi : Boolean(nextCursor);
+
+        const totalCount = toNumber(
+            data.total_following_count ?? data.totalCount ?? data.count,
+            items.length
+        );
 
         return {
-            items: slice,
-            nextCursor: hasMore ? String(nextIndex) : null,
+            items,
+            nextCursor,
             hasMore,
-            totalCount: filtered.length,
+            totalCount,
         };
     },
 };
+

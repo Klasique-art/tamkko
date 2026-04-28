@@ -1,7 +1,11 @@
 import { isAxiosError } from 'axios';
+import { Ionicons } from '@expo/vector-icons';
+import { Image } from 'expo-image';
+import * as ImagePicker from 'expo-image-picker';
 import React from 'react';
 import { KeyboardAvoidingView, Platform, Pressable, ScrollView, TextInput, View } from 'react-native';
 
+import AppModal from '@/components/ui/AppModal';
 import AppText from '@/components/ui/AppText';
 import Screen from '@/components/ui/Screen';
 import { useColors } from '@/config/colors';
@@ -39,6 +43,8 @@ export default function ProfileEditScreen() {
     const { user, refreshUser } = useAuth();
     const { showToast } = useToast();
     const [saving, setSaving] = React.useState(false);
+    const [avatarUploading, setAvatarUploading] = React.useState(false);
+    const [avatarMenuVisible, setAvatarMenuVisible] = React.useState(false);
     const [form, setForm] = React.useState<EditProfileForm>(buildFormFromUser(user));
 
     React.useEffect(() => {
@@ -48,6 +54,11 @@ export default function ProfileEditScreen() {
     const updateField = <K extends keyof EditProfileForm>(key: K, value: EditProfileForm[K]) => {
         setForm((current) => ({ ...current, [key]: value }));
     };
+
+    const profileImageUrl =
+        user?.profile?.avatarUrl ||
+        (user as any)?.profile_picture ||
+        '';
 
     const extractErrorMessage = (error: unknown): string => {
         if (isAxiosError(error)) {
@@ -115,6 +126,103 @@ export default function ProfileEditScreen() {
         }
     };
 
+    const uploadAvatar = async (uri: string, mimeType?: string | null, fileName?: string | null) => {
+        const formData = new FormData();
+        formData.append('avatar', {
+            uri,
+            type: mimeType || 'image/jpeg',
+            name: fileName || `avatar_${Date.now()}.jpg`,
+        } as any);
+
+        try {
+            const response = await client.post('/users/me/avatar', formData, {
+                headers: { 'Content-Type': 'multipart/form-data' },
+            });
+            return response.data;
+        } catch (error: any) {
+            if (error?.response?.status && error.response.status !== 404) {
+                throw error;
+            }
+            const fallbackResponse = await client.post('/users/me/avatar/', formData, {
+                headers: { 'Content-Type': 'multipart/form-data' },
+            });
+            return fallbackResponse.data;
+        }
+    };
+
+    const deleteAvatar = async () => {
+        try {
+            await client.delete('/users/me/avatar');
+        } catch (error: any) {
+            if (error?.response?.status && error.response.status !== 404) {
+                throw error;
+            }
+            await client.delete('/users/me/avatar/');
+        }
+    };
+
+    const pickAndUploadAvatar = async () => {
+        if (avatarUploading || saving) return;
+
+        const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!permission.granted) {
+            showToast('Please allow photo access to update profile image.', { variant: 'warning' });
+            return;
+        }
+
+        const result = await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ['images'] as any,
+            allowsEditing: true,
+            aspect: [1, 1],
+            quality: 0.85,
+        });
+
+        if (result.canceled || !result.assets?.length) return;
+        const asset = result.assets[0];
+        console.log(`[profile] selected image uri :: ${asset.uri}`);
+
+        setAvatarUploading(true);
+        try {
+            const uploadResponse = await uploadAvatar(asset.uri, asset.mimeType, asset.fileName);
+            await refreshUser();
+            const backendImageUrl =
+                uploadResponse?.data?.profile_picture ||
+                uploadResponse?.data?.avatarUrl ||
+                uploadResponse?.profile_picture ||
+                uploadResponse?.avatarUrl ||
+                null;
+            console.log(`[profile] backend profile image uri :: ${String(backendImageUrl)}`);
+            showToast('Profile image updated.', { variant: 'success', duration: 1400 });
+        } catch (error) {
+            showToast(extractErrorMessage(error), { variant: 'error' });
+        } finally {
+            setAvatarUploading(false);
+        }
+    };
+
+    const onAvatarPress = async () => {
+        if (avatarUploading || saving) return;
+        if (!profileImageUrl) {
+            await pickAndUploadAvatar();
+            return;
+        }
+        setAvatarMenuVisible(true);
+    };
+
+    const onRemoveAvatar = async () => {
+        setAvatarMenuVisible(false);
+        setAvatarUploading(true);
+        try {
+            await deleteAvatar();
+            await refreshUser();
+            showToast('Profile image removed.', { variant: 'success', duration: 1400 });
+        } catch (error) {
+            showToast(extractErrorMessage(error), { variant: 'error' });
+        } finally {
+            setAvatarUploading(false);
+        }
+    };
+
     return (
         <Screen title="Edit Profile" className="pt-3">
             <KeyboardAvoidingView
@@ -133,6 +241,50 @@ export default function ProfileEditScreen() {
                         <AppText className="mt-1 text-sm" color={colors.textSecondary}>
                             Update how you appear to creators and subscribers.
                         </AppText>
+
+                        <View className="mt-5 items-center">
+                            <Pressable
+                                onPress={() => void onAvatarPress()}
+                                disabled={avatarUploading || saving}
+                                accessibilityRole="button"
+                                accessibilityLabel={
+                                    avatarUploading
+                                        ? 'Updating profile image'
+                                        : profileImageUrl
+                                            ? 'Profile image. Double tap for photo options'
+                                            : 'Add profile image'
+                                }
+                                accessibilityHint={
+                                    profileImageUrl
+                                        ? 'Opens menu to change or remove your profile image'
+                                        : 'Opens your photo library to select a profile image'
+                                }
+                                accessibilityState={{ disabled: avatarUploading || saving, busy: avatarUploading }}
+                                style={{ opacity: avatarUploading ? 0.75 : 1 }}
+                            >
+                                <View
+                                    className="h-36 w-36 overflow-hidden rounded-full border-2"
+                                    style={{ borderColor: colors.border, backgroundColor: colors.background }}
+                                >
+                                    {profileImageUrl ? (
+                                        <Image source={{ uri: profileImageUrl }} style={{ width: '100%', height: '100%' }} contentFit="cover" />
+                                    ) : (
+                                        <View className="h-full w-full items-center justify-center">
+                                            <Ionicons name="person" size={44} color={colors.textSecondary} />
+                                        </View>
+                                    )}
+                                </View>
+                                <View
+                                    className="absolute bottom-1 right-1 h-10 w-10 items-center justify-center rounded-full border-2"
+                                    style={{ backgroundColor: colors.backgroundAlt, borderColor: colors.border }}
+                                >
+                                    <Ionicons name="camera" size={18} color={colors.textPrimary} />
+                                </View>
+                            </Pressable>
+                            <AppText className="mt-2 text-xs" color={colors.textSecondary}>
+                                {avatarUploading ? 'Updating image...' : profileImageUrl ? 'Tap image to edit or remove' : 'Tap to add profile image'}
+                            </AppText>
+                        </View>
                     </View>
 
                     <View className="mt-4 rounded-3xl border p-4" style={{ borderColor: colors.border, backgroundColor: colors.backgroundAlt }}>
@@ -237,6 +389,46 @@ export default function ProfileEditScreen() {
                     </Pressable>
                 </ScrollView>
             </KeyboardAvoidingView>
+
+            <AppModal
+                visible={avatarMenuVisible}
+                onClose={() => setAvatarMenuVisible(false)}
+                title="Profile Photo"
+                closeOnBackdropPress
+            >
+                <View className="gap-2">
+                    <Pressable
+                        onPress={async () => {
+                            setAvatarMenuVisible(false);
+                            await pickAndUploadAvatar();
+                        }}
+                        className="rounded-xl border px-4 py-3"
+                        style={{ borderColor: colors.border, backgroundColor: colors.backgroundAlt }}
+                        accessibilityRole="button"
+                        accessibilityLabel="Change profile photo"
+                    >
+                        <AppText className="text-sm font-semibold" color={colors.textPrimary}>Change Photo</AppText>
+                    </Pressable>
+                    <Pressable
+                        onPress={() => void onRemoveAvatar()}
+                        className="rounded-xl border px-4 py-3"
+                        style={{ borderColor: `${colors.error}55`, backgroundColor: `${colors.error}11` }}
+                        accessibilityRole="button"
+                        accessibilityLabel="Remove profile photo"
+                    >
+                        <AppText className="text-sm font-semibold" color={colors.error}>Remove Photo</AppText>
+                    </Pressable>
+                    <Pressable
+                        onPress={() => setAvatarMenuVisible(false)}
+                        className="rounded-xl border px-4 py-3"
+                        style={{ borderColor: colors.border, backgroundColor: colors.background }}
+                        accessibilityRole="button"
+                        accessibilityLabel="Cancel photo menu"
+                    >
+                        <AppText className="text-sm font-semibold" color={colors.textSecondary}>Cancel</AppText>
+                    </Pressable>
+                </View>
+            </AppModal>
         </Screen>
     );
 }

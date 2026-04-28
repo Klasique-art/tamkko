@@ -1,4 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
+import { Image } from 'expo-image';
 import { Href, router } from 'expo-router';
 import React from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
@@ -28,6 +29,7 @@ export default function ProfileTab() {
     const { isAuthenticated, user, logout } = useAuth();
     const { unreadCount } = useNotificationCenter();
     const [logoutConfirmVisible, setLogoutConfirmVisible] = React.useState(false);
+    const avatarUrl = user?.profile?.avatarUrl || (user as any)?.profile_picture || '';
 
     const openLogin = () => {
         router.push('/(auth)/login' as Href);
@@ -156,8 +158,20 @@ export default function ProfileTab() {
                         backgroundColor: colors.backgroundAlt,
                     }}
                 >
-                    <View className="h-16 w-16 items-center justify-center rounded-full" style={{ backgroundColor: colors.textPrimary }}>
-                        <Ionicons name="person" size={30} color={colors.background} />
+                    <View
+                        className="h-16 w-16 items-center justify-center overflow-hidden rounded-full"
+                        style={{ backgroundColor: colors.textPrimary }}
+                    >
+                        {avatarUrl ? (
+                            <Image
+                                source={{ uri: avatarUrl }}
+                                style={{ width: '100%', height: '100%' }}
+                                contentFit="cover"
+                                cachePolicy="none"
+                            />
+                        ) : (
+                            <Ionicons name="person" size={30} color={colors.background} />
+                        )}
                     </View>
 
                     <AppText className="mt-4 text-xl font-bold" color={colors.textPrimary}>
