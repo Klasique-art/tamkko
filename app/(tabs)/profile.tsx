@@ -161,11 +161,35 @@ export default function ProfileTab() {
                     </View>
 
                     <AppText className="mt-4 text-xl font-bold" color={colors.textPrimary}>
-                        {user?.first_name} {user?.last_name}
+                        {user?.profile?.displayName || user?.username || 'TAMKKO User'}
                     </AppText>
                     <AppText className="mt-1 text-sm" color={colors.textSecondary}>
-                        {user?.email}
+                        @{user?.username || 'username'}  -  {user?.email}
                     </AppText>
+                    <AppText className="mt-1 text-xs" color={colors.textSecondary}>
+                        {user?.phone}
+                    </AppText>
+
+                    <View className="mt-4 flex-row gap-2">
+                        <View className="flex-1 rounded-xl border p-2" style={{ borderColor: colors.border }}>
+                            <AppText className="text-xs" color={colors.textSecondary}>Followers</AppText>
+                            <AppText className="text-sm font-semibold" color={colors.textPrimary}>
+                                {user?.stats?.followersCount ?? 0}
+                            </AppText>
+                        </View>
+                        <View className="flex-1 rounded-xl border p-2" style={{ borderColor: colors.border }}>
+                            <AppText className="text-xs" color={colors.textSecondary}>Following</AppText>
+                            <AppText className="text-sm font-semibold" color={colors.textPrimary}>
+                                {user?.stats?.followingCount ?? 0}
+                            </AppText>
+                        </View>
+                        <View className="flex-1 rounded-xl border p-2" style={{ borderColor: colors.border }}>
+                            <AppText className="text-xs" color={colors.textSecondary}>Videos</AppText>
+                            <AppText className="text-sm font-semibold" color={colors.textPrimary}>
+                                {user?.stats?.videosCount ?? 0}
+                            </AppText>
+                        </View>
+                    </View>
                 </View>
 
                 <View className="mt-5 gap-3">

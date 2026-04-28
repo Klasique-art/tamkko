@@ -1,4 +1,5 @@
 import { Href, router } from 'expo-router';
+import { isAxiosError } from 'axios';
 import { FormikHelpers } from 'formik';
 import React from 'react';
 import { Pressable } from 'react-native';
@@ -9,7 +10,6 @@ import AppText from '@/components/ui/AppText';
 import { useColors } from '@/config/colors';
 import { LoginFormValues, LoginValidationSchema } from '@/data/authValidation';
 import { useAuth } from '@/context/AuthContext';
-import { delay } from '@/lib/utils/delay';
 
 const initialValues: LoginFormValues = {
     email: '',
@@ -29,14 +29,23 @@ export default function LoginScreen() {
         setLoadingVisible(true);
 
         try {
-            await delay(1200);
             await login({
-                email: values.email.trim().toLowerCase(),
+                emailOrUsername: values.email.trim().toLowerCase(),
                 password: values.password,
             });
             router.replace('/(tabs)/profile' as Href);
-        } catch {
-            setStatus({ error: 'Unable to log in right now. Please try again.' });
+        } catch (error) {
+            const fallback = 'Unable to log in right now. Please try again.';
+
+            if (isAxiosError(error)) {
+                const responseData = error.response?.data as
+                    | { message?: string; errors?: { message?: string }[] }
+                    | undefined;
+                const firstValidationError = responseData?.errors?.find((item) => item?.message?.trim())?.message?.trim();
+                setStatus({ error: firstValidationError || responseData?.message || fallback });
+            } else {
+                setStatus({ error: fallback });
+            }
         } finally {
             setLoadingVisible(false);
             setSubmitting(false);
@@ -52,8 +61,8 @@ export default function LoginScreen() {
             <AppForm initialValues={initialValues} validationSchema={LoginValidationSchema} onSubmit={handleSubmit}>
                 <AppFormField<LoginFormValues>
                     name="email"
-                    label="Email"
-                    placeholder="name@example.com"
+                    label="Email or Username"
+                    placeholder="name@example.com or felixa"
                     type="email"
                     required
                 />

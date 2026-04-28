@@ -46,7 +46,10 @@ export default function ProfileWorkspaceScreen() {
                 <View className="rounded-2xl border p-5" style={{ borderColor: colors.border, backgroundColor: colors.backgroundAlt }}>
                     <AppText className="text-2xl font-bold" color={colors.textPrimary}>Profile</AppText>
                     <AppText className="mt-1 text-sm" color={colors.textSecondary}>
-                        {user?.first_name} {user?.last_name} - {user?.email}
+                        {(user?.profile?.displayName || user?.username || 'TAMKKO User')} - {user?.email}
+                    </AppText>
+                    <AppText className="mt-1 text-xs" color={colors.textSecondary}>
+                        @{user?.username || 'username'} - {user?.phone}
                     </AppText>
                 </View>
 

@@ -1,34 +1,36 @@
 import { Href, router } from 'expo-router';
+import { isAxiosError } from 'axios';
 import { FormikHelpers, useFormikContext } from 'formik';
 import React from 'react';
+import { Pressable, View } from 'react-native';
 
 import { AuthLinkRow, AuthShell, FormStatusMessage } from '@/components/auth';
 import AppErrorMessage from '@/components/form/AppErrorMessage';
 import { AppForm, AppFormField, FormLoader, SubmitButton } from '@/components/form';
 import ToggleField from '@/components/form/ToggleField';
+import AppText from '@/components/ui/AppText';
 import { SignupFormValues, SignupValidationSchema } from '@/data/authValidation';
-import { useAuth } from '@/context/AuthContext';
-import { delay } from '@/lib/utils/delay';
+import { authService } from '@/lib/services/authService';
 
 const initialValues: SignupFormValues = {
     email: '',
     phone: '',
+    username: '',
+    fullName: '',
     password: '',
     confirm_password: '',
-    first_name: '',
-    last_name: '',
-    date_of_birth: '',
-    agree_to_terms: false,
+    agree_terms: false,
 };
 
 function TermsErrorMessage() {
     const { errors, touched } = useFormikContext<SignupFormValues>();
-    return <AppErrorMessage error={errors.agree_to_terms} visible={Boolean(touched.agree_to_terms)} />;
+    return <AppErrorMessage error={errors.agree_terms} visible={Boolean(touched.agree_terms)} />;
 }
 
 export default function RegisterScreen() {
-    const { signup } = useAuth();
     const [loadingVisible, setLoadingVisible] = React.useState(false);
+    const termsHref = '/terms' as Href;
+    const privacyHref = '/(public)/privacy' as Href;
 
     const handleSubmit = async (
         values: SignupFormValues,
@@ -38,21 +40,42 @@ export default function RegisterScreen() {
         setLoadingVisible(true);
 
         try {
-            await delay(1400);
-            await signup({
+            const signupResponse = await authService.signup({
                 email: values.email.trim().toLowerCase(),
                 phone: values.phone.trim(),
+                username: values.username.trim().toLowerCase(),
+                fullName: values.fullName.trim(),
                 password: values.password,
-                re_password: values.confirm_password,
-                first_name: values.first_name.trim(),
-                last_name: values.last_name.trim(),
-                date_of_birth: values.date_of_birth,
-                agree_to_terms: values.agree_to_terms,
+                confirm_password: values.confirm_password,
+                agree_terms: values.agree_terms,
             });
 
-            router.push({ pathname: '/(auth)/verify-email', params: { email: values.email.trim().toLowerCase() } });
-        } catch {
-            setStatus({ error: 'Unable to create your account right now. Please try again.' });
+            const verificationCode =
+                (signupResponse as { data?: { verificationCode?: string; verification_code?: string } })?.data?.verificationCode ||
+                (signupResponse as { data?: { verificationCode?: string; verification_code?: string } })?.data?.verification_code ||
+                (signupResponse as { verificationCode?: string; verification_code?: string })?.verificationCode ||
+                (signupResponse as { verificationCode?: string; verification_code?: string })?.verification_code;
+
+            router.push({
+                pathname: '/(auth)/verify-email',
+                params: {
+                    email: values.email.trim().toLowerCase(),
+                    ...(verificationCode ? { verificationCode } : {}),
+                },
+            });
+        } catch (error) {
+            const fallback = 'Unable to create your account right now. Please try again.';
+
+            if (isAxiosError(error)) {
+                const responseData = error.response?.data as
+                    | { message?: string; errors?: { message?: string }[] }
+                    | undefined;
+
+                const firstValidationError = responseData?.errors?.find((item) => item?.message?.trim())?.message?.trim();
+                setStatus({ error: firstValidationError || responseData?.message || fallback });
+            } else {
+                setStatus({ error: fallback });
+            }
         } finally {
             setLoadingVisible(false);
             setSubmitting(false);
@@ -66,11 +89,10 @@ export default function RegisterScreen() {
             footer={<AuthLinkRow prompt="Already have an account?" actionLabel="Log in" href={'/(auth)/login' as Href} />}
         >
             <AppForm initialValues={initialValues} validationSchema={SignupValidationSchema} onSubmit={handleSubmit}>
-                <AppFormField<SignupFormValues> name="first_name" label="First Name" placeholder="First name" required />
-                <AppFormField<SignupFormValues> name="last_name" label="Last Name" placeholder="Last name" required />
+                <AppFormField<SignupFormValues> name="username" label="Username" placeholder="felixa" required />
+                <AppFormField<SignupFormValues> name="fullName" label="Full Name" placeholder="Felix Acheampong" required />
                 <AppFormField<SignupFormValues> name="email" label="Email" placeholder="name@example.com" type="email" required />
-                <AppFormField<SignupFormValues> name="phone" label="Phone" placeholder="+233xxxxxxxxx" type="tel" required />
-                <AppFormField<SignupFormValues> name="date_of_birth" label="Date of Birth" type="date" required />
+                <AppFormField<SignupFormValues> name="phone" label="Phone" placeholder="+23312312312" type="tel" required />
                 <AppFormField<SignupFormValues>
                     name="password"
                     label="Password"
@@ -91,8 +113,27 @@ export default function RegisterScreen() {
                 />
 
                 <ToggleField
-                    name="agree_to_terms"
-                    label="I agree to Terms & Privacy"
+                    name="agree_terms"
+                    label={
+                        <View className="flex-row flex-wrap items-center">
+                            <AppText className="text-base font-nunbold">I agree to </AppText>
+                            <Pressable
+                                onPress={() => router.push(termsHref)}
+                                accessibilityRole="link"
+                                accessibilityLabel="Open Terms and Conditions"
+                            >
+                                <AppText className="text-base font-nunbold underline">Terms</AppText>
+                            </Pressable>
+                            <AppText className="text-base font-nunbold"> and </AppText>
+                            <Pressable
+                                onPress={() => router.push(privacyHref)}
+                                accessibilityRole="link"
+                                accessibilityLabel="Open Privacy Policy"
+                            >
+                                <AppText className="text-base font-nunbold underline">Privacy</AppText>
+                            </Pressable>
+                        </View>
+                    }
                     description="You must agree before creating an account."
                 />
                 <TermsErrorMessage />

@@ -9,8 +9,8 @@ import AppText from '@/components/ui/AppText';
 
 interface ToggleFieldProps {
     name: string;
-    label: string;
-    description?: string;
+    label: React.ReactNode;
+    description?: React.ReactNode;
 }
 
 const ToggleField = ({ name, label, description }: ToggleFieldProps) => {
@@ -26,13 +26,21 @@ const ToggleField = ({ name, label, description }: ToggleFieldProps) => {
     return (
         <View className="flex-row items-center justify-between py-3 mb-2">
             <View className="flex-1 mr-4">
-                <AppText className="text-base font-nunbold mb-1" style={{ color: colors.textPrimary }}>
-                    {label}
-                </AppText>
-                {description && (
-                    <AppText className="text-xs font-nunmedium" style={{ color: colors.textSecondary }}>
-                        {description}
+                {typeof label === 'string' ? (
+                    <AppText className="text-base font-nunbold mb-1" style={{ color: colors.textPrimary }}>
+                        {label}
                     </AppText>
+                ) : (
+                    <View className="mb-1">{label}</View>
+                )}
+                {description && (
+                    typeof description === 'string' ? (
+                        <AppText className="text-xs font-nunmedium" style={{ color: colors.textSecondary }}>
+                            {description}
+                        </AppText>
+                    ) : (
+                        description
+                    )
                 )}
             </View>
 

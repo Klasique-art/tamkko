@@ -1,4 +1,5 @@
 import { Href, router, useLocalSearchParams } from 'expo-router';
+import * as Clipboard from 'expo-clipboard';
 import { FormikHelpers } from 'formik';
 import React from 'react';
 import { Pressable } from 'react-native';
@@ -20,8 +21,9 @@ export default function VerifyEmailScreen() {
     const colors = useColors();
     const { verifySignupCode } = useAuth();
     const { showToast } = useToast();
-    const params = useLocalSearchParams<{ email?: string }>();
+    const params = useLocalSearchParams<{ email?: string; verificationCode?: string }>();
     const email = String(params.email || 'new.user@tamkko.app');
+    const verificationCode = typeof params.verificationCode === 'string' ? params.verificationCode : '';
 
     const [loadingVisible, setLoadingVisible] = React.useState(false);
 
@@ -52,6 +54,12 @@ export default function VerifyEmailScreen() {
         showToast('A new verification code was sent.', { variant: 'info' });
     };
 
+    const handleCopyCode = async () => {
+        if (!verificationCode) return;
+        await Clipboard.setStringAsync(verificationCode);
+        showToast('Verification code copied.', { variant: 'success', duration: 1400 });
+    };
+
     return (
         <AuthShell
             title="Verify Email"
@@ -77,6 +85,33 @@ export default function VerifyEmailScreen() {
                         Resend Code
                     </AppText>
                 </Pressable>
+
+                {__DEV__ && verificationCode ? (
+                    <Pressable
+                        onPress={handleCopyCode}
+                        className="rounded-xl border px-3 py-2"
+                        style={{ borderColor: colors.border, backgroundColor: colors.backgroundAlt }}
+                        accessibilityRole="button"
+                        accessibilityLabel="Copy development verification code"
+                        accessibilityHint="Copies the development verification code to clipboard"
+                    >
+                        <AppText className="text-xs" color={colors.textSecondary}>
+                            Dev verification code
+                        </AppText>
+                        <AppText className="mt-1 text-base font-bold" color={colors.textPrimary}>
+                            {verificationCode}
+                        </AppText>
+                        <AppText className="mt-1 text-xs" color={colors.textSecondary}>
+                            Tap to copy
+                        </AppText>
+                    </Pressable>
+                ) : null}
+
+                {__DEV__ && !verificationCode ? (
+                    <AppText className="text-xs" color={colors.textSecondary}>
+                        Dev note: backend did not return a verification code in signup response.
+                    </AppText>
+                ) : null}
 
                 <FormStatusMessage />
                 <SubmitButton title="Verify & Continue" />

@@ -77,6 +77,7 @@ const extractFirstErrorText = (value: unknown): string | null => {
 const toReadableError = (error: any): string => {
     const data = error?.response?.data;
     return (
+        extractFirstErrorText(data?.errors) ||
         extractFirstErrorText(data?.error?.details?.error?.details) ||
         extractFirstErrorText(data?.error?.details?.error?.message) ||
         extractFirstErrorText(data?.error?.details?.message) ||
@@ -93,15 +94,36 @@ const toReadableError = (error: any): string => {
 const logApiError = (scope: string, error: any) => {
     const status = error?.response?.status;
     const readableMessage = toReadableError(error);
+    const method = String(error?.config?.method || 'POST').toUpperCase();
+    const baseURL = error?.config?.baseURL || '';
+    const requestUrl = error?.config?.url || '';
+    const fullUrl =
+        /^https?:\/\//i.test(requestUrl)
+            ? requestUrl
+            : `${String(baseURL).replace(/\/+$/, '')}/${String(requestUrl).replace(/^\/+/, '')}`;
+    const requestDataRaw = error?.config?.data;
+    let requestPayload: unknown = requestDataRaw;
+    if (typeof requestDataRaw === 'string') {
+        try {
+            requestPayload = JSON.parse(requestDataRaw);
+        } catch {
+            requestPayload = requestDataRaw;
+        }
+    }
+
     const payload = {
+        method,
+        full_url: fullUrl,
+        request_url: requestUrl,
+        base_url: baseURL,
+        request_payload: requestPayload,
         status,
         message: readableMessage,
+        error_message: error?.message,
+        response_data: error?.response?.data,
         data_preview: toErrorPreview(error?.response?.data),
     };
-    console.log(`[authService] ${scope} failed: ${readableMessage}`);
-    if (status >= 500 || !status) {
-        console.log(`[authService] ${scope} debug :: ${JSON.stringify(payload)}`);
-    }
+    console.log(`[authService] ${scope} failed :: ${JSON.stringify(payload)}`);
 };
 
 const extractToken = (source: unknown, keys: string[]): string | null => {
@@ -132,10 +154,16 @@ export const authService = {
 
     async signup(payload: SignupRequest): Promise<SignupResponse> {
         try {
-            const response = await client.post('/auth/register/', payload);
+            const normalizedPayload: SignupRequest = {
+                ...payload,
+                email: payload.email.trim().toLowerCase(),
+                username: payload.username.trim().toLowerCase(),
+            };
+
+            const response = await client.post('/auth/register/', normalizedPayload);
             const pendingCredentials = {
-                email: payload.email,
-                password: payload.password,
+                emailOrUsername: normalizedPayload.email,
+                password: normalizedPayload.password,
             };
             authService.pendingSignupCredentials = pendingCredentials;
             await authStorage.setPendingSignupCredentials(
@@ -151,7 +179,20 @@ export const authService = {
 
     async login(payload: LoginRequest): Promise<LoginResponse> {
         try {
-            const response = await client.post('/auth/jwt/create/', payload);
+            const normalizedPayload: LoginRequest = {
+                ...payload,
+                emailOrUsername: payload.emailOrUsername.trim().toLowerCase(),
+            };
+
+            let response;
+            try {
+                response = await client.post('/auth/login', normalizedPayload);
+            } catch (error: any) {
+                if (error?.response?.status && error.response.status !== 404) {
+                    throw error;
+                }
+                response = await client.post('/auth/login/', normalizedPayload);
+            }
             const responseData = response.data;
 
             const access = extractToken(responseData, [
@@ -239,8 +280,27 @@ export const authService = {
 
     async getCurrentUser(): Promise<CurrentUser> {
         try {
-            const response = await client.get<{ success: boolean; data: CurrentUser }>('/users/profile/');
-            return response.data.data;
+            let response;
+            try {
+                response = await client.get('/auth/me');
+            } catch (error: any) {
+                if (error?.response?.status && error.response.status !== 404) {
+                    throw error;
+                }
+                response = await client.get('/auth/me/');
+            }
+
+            const payload = response.data as
+                | CurrentUser
+                | { data?: CurrentUser; user?: CurrentUser; status?: string }
+                | { data?: { user?: CurrentUser }; status?: string };
+
+            return (
+                (payload as { data?: { user?: CurrentUser } })?.data?.user ||
+                (payload as { data?: CurrentUser })?.data ||
+                (payload as { user?: CurrentUser })?.user ||
+                (payload as CurrentUser)
+            );
         } catch (error) {
             logApiError('getCurrentUser', error);
             throw error;
@@ -249,11 +309,24 @@ export const authService = {
 
     async logout(): Promise<void> {
         try {
-            const sessionId = await authStorage.getSessionId();
-            if (sessionId) {
-                await client.post('/auth/logout/', { session_id: sessionId });
-            } else {
-                await client.post('/auth/logout/', { logout_all_devices: true });
+            const [sessionId, refreshToken] = await Promise.all([
+                authStorage.getSessionId(),
+                authStorage.getRefreshToken(),
+            ]);
+
+            const payload = refreshToken
+                ? { refresh_token: refreshToken }
+                : sessionId
+                    ? { session_id: sessionId }
+                    : { logout_all_devices: true };
+
+            try {
+                await client.post('/auth/logout', payload);
+            } catch (error: any) {
+                if (error?.response?.status && error.response.status !== 404) {
+                    throw error;
+                }
+                await client.post('/auth/logout/', payload);
             }
         } catch (error) {
             logApiError('logout', error);
@@ -308,7 +381,7 @@ export const authService = {
 
     async consumePendingSignupCredentials(email: string): Promise<LoginRequest | null> {
         const fromMemory = authService.pendingSignupCredentials;
-        if (fromMemory && fromMemory.email === email) {
+        if (fromMemory && fromMemory.emailOrUsername === email) {
             await authStorage.clearPendingSignupCredentials();
             authService.pendingSignupCredentials = null;
             return fromMemory;

@@ -208,7 +208,7 @@ data/
 lib/
   client.ts
   auth.ts
-  authEvents.ts
+  authSync.ts
   services/
     authService.ts
     userService.ts

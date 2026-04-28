@@ -2,7 +2,7 @@ import axios, { AxiosRequestConfig } from 'axios';
 
 import { API_BASE_URL } from '@/config/settings';
 import { authStorage } from '@/lib/auth';
-import { authEvents } from '@/lib/authEvents';
+import { authSync } from '@/lib/authSync';
 
 const toErrorPreview = (data: unknown): string | unknown => {
     const truncateToWords = (input: string, maxWords = 500) => {
@@ -166,7 +166,7 @@ client.interceptors.request.use(async (config) => {
                 const status = error?.response?.status;
                 if (status === 401 || status === 403) {
                     await authStorage.clearTokens();
-                    authEvents.emitUnauthorized();
+                    authSync.handleUnauthorized();
                     token = null;
                 } else {
                     // Network/server refresh failures should not drop an existing valid session.
@@ -182,7 +182,7 @@ client.interceptors.request.use(async (config) => {
         const status = error?.response?.status;
         if (status === 401 || status === 403) {
             await authStorage.clearTokens();
-            authEvents.emitUnauthorized();
+            authSync.handleUnauthorized();
         }
     }
     return config;
@@ -207,7 +207,7 @@ client.interceptors.response.use(
                 const status = refreshError?.response?.status;
                 if (status === 401 || status === 403) {
                     await authStorage.clearTokens();
-                    authEvents.emitUnauthorized();
+                    authSync.handleUnauthorized();
                 }
             }
         }

@@ -1,18 +1,42 @@
 export interface CurrentUser {
-    user_id: string;
+    _id?: string;
+    user_id?: string;
+    username?: string;
     email: string;
     phone: string;
-    first_name: string;
-    last_name: string;
-    country: string;
-    date_of_birth: string; // ISO date string
-    kyc_status: 'verified' | 'pending' | 'rejected' | 'unverified' | 'not_submitted';
-    kyc_verified_at: string | null; // ISO datetime string
-    email_verified: boolean;
-    phone_verified: boolean;
-    account_status: 'active' | 'suspended' | 'inactive';
-    created_at: string; // ISO datetime string
-    updated_at: string; // ISO datetime string
-    referral_code: string | null;
-    referred_by: string | null;
+    role?: string;
+    isDeleted?: boolean;
+    createdAt?: string;
+    updatedAt?: string;
+    lastLoginAt?: string;
+    profile?: {
+        displayName?: string;
+        bio?: string;
+        avatarUrl?: string;
+        coverUrl?: string;
+        isVerified?: boolean;
+    };
+    wallet?: {
+        balance?: number;
+        pendingBalance?: number;
+        currency?: string;
+    };
+    referral?: {
+        code?: string;
+        referralCount?: number;
+        referralEarnings?: number;
+    };
+    stats?: {
+        followersCount?: number;
+        followingCount?: number;
+        videosCount?: number;
+        totalTipsReceived?: number;
+        totalViews?: number;
+    };
+
+    // Backward-compat fields still referenced in a few legacy UI screens.
+    first_name?: string;
+    last_name?: string;
+    country?: string;
+    date_of_birth?: string;
 }

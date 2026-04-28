@@ -8,12 +8,11 @@ export type LoginFormValues = {
 export type SignupFormValues = {
     email: string;
     phone: string;
+    username: string;
+    fullName: string;
     password: string;
     confirm_password: string;
-    first_name: string;
-    last_name: string;
-    date_of_birth: string;
-    agree_to_terms: boolean;
+    agree_terms: boolean;
 };
 
 export type ForgotPasswordFormValues = {
@@ -55,6 +54,16 @@ export const SignupValidationSchema = Yup.object().shape({
         .trim()
         .matches(simplePhoneRegex, 'Please enter a valid phone number.')
         .required('Phone number is required.'),
+    username: Yup.string()
+        .trim()
+        .min(3, 'Username must be at least 3 characters.')
+        .max(30, 'Username must be at most 30 characters.')
+        .matches(/^[a-zA-Z0-9._]+$/, 'Username can only contain letters, numbers, dots, and underscores.')
+        .required('Username is required.'),
+    fullName: Yup.string()
+        .trim()
+        .min(2, 'Full name is too short.')
+        .required('Full name is required.'),
     password: Yup.string()
         .min(8, 'Password must be at least 8 characters.')
         .matches(
@@ -65,18 +74,7 @@ export const SignupValidationSchema = Yup.object().shape({
     confirm_password: Yup.string()
         .oneOf([Yup.ref('password')], 'Passwords do not match.')
         .required('Please confirm your password.'),
-    first_name: Yup.string()
-        .trim()
-        .min(2, 'First name is too short.')
-        .required('First name is required.'),
-    last_name: Yup.string()
-        .trim()
-        .min(2, 'Last name is too short.')
-        .required('Last name is required.'),
-    date_of_birth: Yup.date()
-        .typeError('Date of birth is required.')
-        .required('Date of birth is required.'),
-    agree_to_terms: Yup.boolean()
+    agree_terms: Yup.boolean()
         .oneOf([true], 'You must agree to the terms and conditions.')
         .required('You must agree to the terms and conditions.'),
 });

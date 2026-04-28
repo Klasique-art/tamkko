@@ -1,10 +1,10 @@
 import * as SecureStore from 'expo-secure-store';
 
-export const AUTH_TOKEN_KEY = 'thefourthbook_auth_token';
-export const REFRESH_TOKEN_KEY = 'thefourthbook_refresh_token';
-export const AUTH_SESSION_ID_KEY = 'thefourthbook_auth_session_id';
-export const PENDING_SIGNUP_EMAIL_KEY = 'thefourthbook_pending_signup_email';
-export const PENDING_SIGNUP_PASSWORD_KEY = 'thefourthbook_pending_signup_password';
+export const AUTH_TOKEN_KEY = 'tamkko_auth_token';
+export const REFRESH_TOKEN_KEY = 'tamkko_refresh_token';
+export const AUTH_SESSION_ID_KEY = 'tamkko_auth_session_id';
+export const PENDING_SIGNUP_EMAIL_KEY = 'tamkko_pending_signup_email';
+export const PENDING_SIGNUP_PASSWORD_KEY = 'tamkko_pending_signup_password';
 
 export const authStorage = {
     async getAccessToken(): Promise<string | null> {

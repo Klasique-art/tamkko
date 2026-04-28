@@ -1,18 +1,17 @@
 export type SignupRequest = {
     email: string;
-    password: string;
-    re_password: string;
-    first_name: string;
-    last_name: string;
     phone: string;
-    date_of_birth: string;
-    agree_to_terms: boolean;
+    username: string;
+    fullName: string;
+    password: string;
+    confirm_password: string;
+    agree_terms: boolean;
 };
 
 export type SignupResponse = Record<string, unknown>;
 
 export type LoginRequest = {
-    email: string;
+    emailOrUsername: string;
     password: string;
 };
 
