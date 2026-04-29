@@ -75,3 +75,12 @@ export type EarningsByVideoItem = {
     totalEarnings: number;
     views: number;
 };
+
+export type WalletEarningsBreakdownSummary = {
+    currency: string;
+    totalEarnings: number;
+    totalViews: number;
+    tipsTotal: number;
+    subscriptionsTotal: number;
+    referralRewardsTotal: number;
+};

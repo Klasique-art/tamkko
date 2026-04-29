@@ -1,12 +1,12 @@
 import { Ionicons } from '@expo/vector-icons';
-import { Href, router } from 'expo-router';
+import { Href, router, useFocusEffect } from 'expo-router';
 import React from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
 
 import AppText from '@/components/ui/AppText';
 import Screen from '@/components/ui/Screen';
 import { useColors } from '@/config/colors';
-import { mockWalletService } from '@/lib/services/mockWalletService';
+import { walletService } from '@/lib/services/walletService';
 import { formatCurrency } from '@/lib/utils';
 import { WalletSummary, WalletTransaction } from '@/types/wallet.types';
 
@@ -15,21 +15,33 @@ export default function WalletHomeScreen() {
     const [summary, setSummary] = React.useState<WalletSummary | null>(null);
     const [transactions, setTransactions] = React.useState<WalletTransaction[]>([]);
     const [loading, setLoading] = React.useState(true);
+    const isRefreshingRef = React.useRef(false);
 
     const refresh = React.useCallback(async () => {
+        if (isRefreshingRef.current) return;
+        isRefreshingRef.current = true;
         setLoading(true);
-        const [nextSummary, nextTransactions] = await Promise.all([
-            mockWalletService.getSummary(),
-            mockWalletService.getTransactions(),
-        ]);
-        setSummary(nextSummary);
-        setTransactions(nextTransactions.slice(0, 4));
-        setLoading(false);
+        try {
+            const [nextSummary, nextTransactions] = await Promise.all([
+                walletService.getSummary(),
+                walletService.getRecentActivities(4),
+            ]);
+            setSummary(nextSummary);
+            setTransactions(nextTransactions);
+        } finally {
+            setLoading(false);
+            isRefreshingRef.current = false;
+        }
     }, []);
 
-    React.useEffect(() => {
+    useFocusEffect(React.useCallback(() => {
         void refresh();
-    }, [refresh]);
+        const interval = setInterval(() => {
+            void refresh();
+        }, 10000);
+
+        return () => clearInterval(interval);
+    }, [refresh]));
 
     return (
         <Screen className="pt-4" title="Wallet">

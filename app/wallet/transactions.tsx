@@ -6,25 +6,20 @@ import { Pressable, View } from 'react-native';
 import AppText from '@/components/ui/AppText';
 import Screen from '@/components/ui/Screen';
 import { useColors } from '@/config/colors';
-import { mockWalletService } from '@/lib/services/mockWalletService';
+import { walletService } from '@/lib/services/walletService';
 import { formatCurrency } from '@/lib/utils';
-import { SentTipItem, WalletTransaction } from '@/types/wallet.types';
+import { WalletTransaction } from '@/types/wallet.types';
 
 type TransactionFilter = 'all' | 'credits' | 'debits';
 
 export default function WalletTransactionsScreen() {
     const colors = useColors();
     const [transactions, setTransactions] = React.useState<WalletTransaction[]>([]);
-    const [sentTips, setSentTips] = React.useState<SentTipItem[]>([]);
     const [filter, setFilter] = React.useState<TransactionFilter>('all');
 
     const load = React.useCallback(async () => {
-        const [tx, tips] = await Promise.all([
-            mockWalletService.getTransactions(),
-            mockWalletService.getSentTips(),
-        ]);
-        setTransactions(tx);
-        setSentTips(tips);
+        const response = await walletService.getTransactions();
+        setTransactions(response.transactions);
     }, []);
 
     React.useEffect(() => {
@@ -47,6 +42,17 @@ export default function WalletTransactionsScreen() {
                 ListHeaderComponent={
                     <View>
                         <View className="rounded-xl border p-1" style={{ borderColor: colors.border, backgroundColor: colors.backgroundAlt }}>
+                            <Pressable
+                                onPress={() => router.push('/wallet/sent-tips')}
+                                className="mb-2 rounded-lg border py-2"
+                                style={{ borderColor: colors.border, backgroundColor: colors.background }}
+                                accessibilityRole="button"
+                                accessibilityLabel="Open sent tips history"
+                            >
+                                <AppText className="text-center text-xs font-semibold" color={colors.textPrimary}>
+                                    Sent Tips History
+                                </AppText>
+                            </Pressable>
                             <View className="flex-row">
                                 {([
                                     { id: 'all', label: 'All' },
@@ -96,36 +102,6 @@ export default function WalletTransactionsScreen() {
                 ListEmptyComponent={
                     <View className="rounded-xl border p-3" style={{ borderColor: colors.border, backgroundColor: colors.backgroundAlt }}>
                         <AppText className="text-sm" color={colors.textSecondary}>No transactions found.</AppText>
-                    </View>
-                }
-                ListFooterComponent={
-                    <View className="mt-4">
-                        <AppText className="mb-2 text-sm font-semibold" color={colors.textPrimary}>Sent Tips History</AppText>
-                        {sentTips.length === 0 ? (
-                            <View className="rounded-xl border p-3" style={{ borderColor: colors.border, backgroundColor: colors.backgroundAlt }}>
-                                <AppText className="text-sm" color={colors.textSecondary}>No sent tips yet.</AppText>
-                            </View>
-                        ) : sentTips.map((tip) => (
-                            <Pressable
-                                key={tip.tipId}
-                                onPress={() => router.push(`/wallet/tip-status/${encodeURIComponent(tip.tipId)}`)}
-                                className="mb-2 rounded-xl border p-3"
-                                style={{ borderColor: colors.border, backgroundColor: colors.backgroundAlt }}
-                                accessibilityRole="button"
-                                accessibilityLabel={`Open tip ${tip.tipId} status`}
-                            >
-                                <View className="flex-row items-center justify-between">
-                                    <View>
-                                        <AppText className="text-sm font-semibold" color={colors.textPrimary}>{tip.creatorUsername}</AppText>
-                                        <AppText className="mt-1 text-xs" color={colors.textSecondary}>{tip.reference}</AppText>
-                                    </View>
-                                    <AppText className="text-sm font-bold" color={colors.textPrimary}>{formatCurrency(tip.amount, tip.currency)}</AppText>
-                                </View>
-                                <AppText className="mt-1 text-[11px]" color={tip.status === 'failed' ? colors.error : tip.status === 'completed' ? colors.success : colors.warning}>
-                                    {tip.status.toUpperCase()} - Tap to open status
-                                </AppText>
-                            </Pressable>
-                        ))}
                     </View>
                 }
             />
