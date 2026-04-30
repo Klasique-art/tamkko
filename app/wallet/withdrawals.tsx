@@ -9,16 +9,16 @@ import Screen from '@/components/ui/Screen';
 import { useColors } from '@/config/colors';
 import { useToast } from '@/context/ToastContext';
 import { mockWalletService } from '@/lib/services/mockWalletService';
+import { walletService } from '@/lib/services/walletService';
 import { formatCurrency } from '@/lib/utils';
-import { WalletWithdrawalItem } from '@/types/wallet.types';
+import { MomoAccount, WalletWithdrawalItem } from '@/types/wallet.types';
 
 export default function WalletWithdrawalsScreen() {
     const colors = useColors();
     const { showToast } = useToast();
     const [withdrawals, setWithdrawals] = React.useState<WalletWithdrawalItem[]>([]);
     const [amount, setAmount] = React.useState('120');
-    const [network, setNetwork] = React.useState<'mtn' | 'vodafone' | 'airteltigo'>('mtn');
-    const [phoneNumber, setPhoneNumber] = React.useState('0240001122');
+    const [payoutAccount, setPayoutAccount] = React.useState<MomoAccount | null>(null);
 
     const [otpModalVisible, setOtpModalVisible] = React.useState(false);
     const [pendingWithdrawalId, setPendingWithdrawalId] = React.useState<string | null>(null);
@@ -26,8 +26,12 @@ export default function WalletWithdrawalsScreen() {
     const [otp, setOtp] = React.useState('');
 
     const load = React.useCallback(async () => {
-        const next = await mockWalletService.getWithdrawals();
-        setWithdrawals(next);
+        const [nextWithdrawals, nextAccount] = await Promise.all([
+            mockWalletService.getWithdrawals(),
+            walletService.getMomoAccount().catch(() => null),
+        ]);
+        setWithdrawals(nextWithdrawals);
+        setPayoutAccount(nextAccount);
     }, []);
 
     React.useEffect(() => {
@@ -40,15 +44,16 @@ export default function WalletWithdrawalsScreen() {
             showToast('Enter a valid withdrawal amount.', { variant: 'warning' });
             return;
         }
-        if (phoneNumber.trim().length < 10) {
-            showToast('Enter a valid MoMo phone number.', { variant: 'warning' });
+
+        if (!payoutAccount?.phoneNumber || payoutAccount.phoneNumber.trim().length < 10) {
+            showToast('Set your payout account in Mobile Money Account first.', { variant: 'warning' });
             return;
         }
 
         const initiated = await mockWalletService.initiateWithdrawal({
             amount: parsed,
-            network,
-            phoneNumber: phoneNumber.trim(),
+            network: payoutAccount.network,
+            phoneNumber: payoutAccount.phoneNumber.trim(),
         });
 
         setPendingWithdrawalId(initiated.withdrawal.id);
@@ -57,7 +62,7 @@ export default function WalletWithdrawalsScreen() {
         setOtpModalVisible(true);
         await load();
         showToast('OTP sent. Use 123456 for simulated verification.', { variant: 'info', duration: 2200 });
-    }, [amount, load, network, phoneNumber, showToast]);
+    }, [amount, load, payoutAccount, showToast]);
 
     const verifyOtp = React.useCallback(async () => {
         if (!pendingWithdrawalId || !otpChallengeId) return;
@@ -85,6 +90,38 @@ export default function WalletWithdrawalsScreen() {
                         <View className="rounded-2xl border p-4" style={{ borderColor: colors.border, backgroundColor: colors.backgroundAlt }}>
                             <AppText className="text-sm font-semibold" color={colors.textPrimary}>Request Withdrawal</AppText>
 
+                            {payoutAccount?.phoneNumber ? (
+                                <View className="mt-3 rounded-xl border p-3" style={{ borderColor: colors.border, backgroundColor: colors.background }}>
+                                    <AppText className="text-[11px]" color={colors.textSecondary}>Payout Account</AppText>
+                                    <AppText className="mt-1 text-sm font-semibold" color={colors.textPrimary}>
+                                        {payoutAccount.network.toUpperCase()} {payoutAccount.phoneNumber}
+                                    </AppText>
+                                    <AppText className="mt-1 text-[11px]" color={payoutAccount.isVerified ? colors.success : colors.warning}>
+                                        {payoutAccount.isVerified ? 'VERIFIED' : 'UNVERIFIED'}
+                                    </AppText>
+                                </View>
+                            ) : (
+                                <View className="mt-3 rounded-xl border p-3" style={{ borderColor: colors.border, backgroundColor: colors.background }}>
+                                    <AppText className="text-sm font-semibold" color={colors.textPrimary}>
+                                        Set your payout account first
+                                    </AppText>
+                                    <AppText className="mt-1 text-xs" color={colors.textSecondary}>
+                                        Go to Mobile Money Account and save the number you want to withdraw to.
+                                    </AppText>
+                                    <Pressable
+                                        onPress={() => router.push('/wallet/momo-account')}
+                                        className="mt-3 rounded-lg border py-2"
+                                        style={{ borderColor: colors.border, backgroundColor: colors.backgroundAlt }}
+                                        accessibilityRole="button"
+                                        accessibilityLabel="Open mobile money account settings"
+                                    >
+                                        <AppText className="text-center text-xs font-semibold" color={colors.textPrimary}>
+                                            Open Mobile Money Account
+                                        </AppText>
+                                    </Pressable>
+                                </View>
+                            )}
+
                             <View className="mt-3 rounded-xl border px-3" style={{ borderColor: colors.border, backgroundColor: colors.background }}>
                                 <TextInput
                                     value={amount}
@@ -97,45 +134,15 @@ export default function WalletWithdrawalsScreen() {
                                 />
                             </View>
 
-                            <View className="mt-2 rounded-xl border px-3" style={{ borderColor: colors.border, backgroundColor: colors.background }}>
-                                <TextInput
-                                    value={phoneNumber}
-                                    onChangeText={setPhoneNumber}
-                                    keyboardType="phone-pad"
-                                    placeholder="MoMo number"
-                                    placeholderTextColor={colors.textSecondary}
-                                    style={{ color: colors.textPrimary, paddingVertical: 12 }}
-                                    accessibilityLabel="MoMo number"
-                                />
-                            </View>
-
-                            <View className="mt-2 flex-row rounded-xl border p-1" style={{ borderColor: colors.border, backgroundColor: colors.background }}>
-                                {([
-                                    { id: 'mtn', label: 'MTN' },
-                                    { id: 'vodafone', label: 'Vodafone' },
-                                    { id: 'airteltigo', label: 'AirtelTigo' },
-                                ] as const).map((item) => {
-                                    const selected = network === item.id;
-                                    return (
-                                        <Pressable
-                                            key={item.id}
-                                            onPress={() => setNetwork(item.id)}
-                                            className="flex-1 rounded-lg py-2"
-                                            style={{ backgroundColor: selected ? colors.backgroundAlt : 'transparent' }}
-                                            accessibilityRole="button"
-                                            accessibilityState={{ selected }}
-                                            accessibilityLabel={`${item.label} network`}
-                                        >
-                                            <AppText className="text-center text-xs font-semibold" color={colors.textPrimary}>{item.label}</AppText>
-                                        </Pressable>
-                                    );
-                                })}
-                            </View>
-
                             <Pressable
                                 onPress={() => void handleInitiate()}
+                                disabled={!payoutAccount?.phoneNumber}
                                 className="mt-3 rounded-xl border py-3"
-                                style={{ borderColor: colors.border, backgroundColor: colors.background }}
+                                style={{
+                                    borderColor: colors.border,
+                                    backgroundColor: payoutAccount?.phoneNumber ? colors.background : colors.backgroundAlt,
+                                    opacity: payoutAccount?.phoneNumber ? 1 : 0.6,
+                                }}
                                 accessibilityRole="button"
                                 accessibilityLabel="Initiate withdrawal"
                             >

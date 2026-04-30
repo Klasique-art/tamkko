@@ -2,6 +2,7 @@ import client from '@/lib/client';
 import { ApiSuccessResponse } from '@/types/api.types';
 import {
     EarningsByVideoItem,
+    MomoAccount,
     WalletEarningsBreakdownSummary,
     WalletSummary,
     WalletTransaction,
@@ -52,6 +53,26 @@ type EarningsByVideoApiResponse = {
     videos: EarningsByVideoApi[];
 };
 
+type MomoAccountApi = {
+    network?: 'mtn' | 'vodafone' | 'airteltigo' | null;
+    phone_number?: string | null;
+    account_name?: string | null;
+    is_verified?: boolean | null;
+    updated_at?: string | null;
+};
+
+type MomoAccountResponse = {
+    account: MomoAccountApi;
+};
+
+type BeginMomoUpdateResponse = {
+    challenge_id: string;
+    masked_phone: string;
+    expires_at?: string;
+    account_name?: string;
+    otp?: string;
+};
+
 const mapSummary = (item: WalletSummaryApi): WalletSummary => ({
     currency: item.currency,
     availableBalance: item.available_balance,
@@ -89,6 +110,14 @@ const mapEarningsSummary = (
     tipsTotal: item.tips_total,
     subscriptionsTotal: item.subscriptions_total,
     referralRewardsTotal: item.referral_rewards_total ?? 0,
+});
+
+const mapMomoAccount = (item: MomoAccountApi): MomoAccount => ({
+    network: item.network ?? 'mtn',
+    phoneNumber: item.phone_number ?? '',
+    accountName: item.account_name ?? '',
+    isVerified: Boolean(item.is_verified),
+    updatedAt: item.updated_at ?? new Date(0).toISOString(),
 });
 
 export const walletService = {
@@ -157,6 +186,66 @@ export const walletService = {
         return {
             summary: source.summary ? mapEarningsSummary(source.summary) : fallbackSummary,
             videos,
+        };
+    },
+
+    async getMomoAccount(): Promise<MomoAccount> {
+        const response = await client.get<ApiSuccessResponse<MomoAccountResponse> | MomoAccountResponse>('/wallet/momo-account');
+        const payload = response.data as ApiSuccessResponse<MomoAccountResponse> & MomoAccountResponse;
+        const source = payload.data ?? payload;
+        if (!source.account) throw new Error('MoMo account payload missing account object.');
+        return mapMomoAccount(source.account);
+    },
+
+    async beginMomoAccountUpdate(input: {
+        network: 'mtn' | 'vodafone' | 'airteltigo';
+        phoneNumber: string;
+    }): Promise<{ challengeId: string; maskedPhone: string; accountName?: string; otp?: string }> {
+        const response = await client.post<ApiSuccessResponse<BeginMomoUpdateResponse> | BeginMomoUpdateResponse>(
+            '/wallet/momo-account/update/begin',
+            {
+                network: input.network,
+                phone_number: input.phoneNumber,
+            }
+        );
+        const payload = response.data as ApiSuccessResponse<BeginMomoUpdateResponse> & BeginMomoUpdateResponse;
+        const source = payload.data ?? payload;
+        return {
+            challengeId: source.challenge_id,
+            maskedPhone: source.masked_phone,
+            accountName: source.account_name,
+            otp: source.otp,
+        };
+    },
+
+    async confirmMomoAccountUpdate(
+        challengeId: string,
+        otp: string,
+        input: {
+            network: 'mtn' | 'vodafone' | 'airteltigo';
+            phoneNumber: string;
+        }
+    ): Promise<{ ok: boolean; message: string; account: MomoAccount }> {
+        const response = await client.post<
+            | ApiSuccessResponse<{ ok?: boolean; message?: string; account: MomoAccountApi }>
+            | { ok?: boolean; message?: string; account: MomoAccountApi }
+        >('/wallet/momo-account/update/confirm', {
+            challenge_id: challengeId,
+            otp,
+            network: input.network,
+            phone_number: input.phoneNumber,
+        });
+        const payload = response.data as ApiSuccessResponse<{ ok?: boolean; message?: string; account: MomoAccountApi }> & {
+            ok?: boolean;
+            message?: string;
+            account?: MomoAccountApi;
+        };
+        const source = payload.data ?? payload;
+        if (!source.account) throw new Error('MoMo confirm payload missing account object.');
+        return {
+            ok: source.ok ?? true,
+            message: source.message ?? 'Mobile money account updated.',
+            account: mapMomoAccount(source.account),
         };
     },
 };

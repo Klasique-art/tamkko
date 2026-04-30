@@ -6,7 +6,7 @@ import AppText from '@/components/ui/AppText';
 import Screen from '@/components/ui/Screen';
 import { useColors } from '@/config/colors';
 import { useToast } from '@/context/ToastContext';
-import { mockWalletService } from '@/lib/services/mockWalletService';
+import { walletService } from '@/lib/services/walletService';
 import { MomoAccount } from '@/types/wallet.types';
 
 export default function MomoAccountScreen() {
@@ -14,46 +14,60 @@ export default function MomoAccountScreen() {
     const { showToast } = useToast();
 
     const [account, setAccount] = React.useState<MomoAccount | null>(null);
-    const [accountName, setAccountName] = React.useState('');
+    const [resolvedAccountName, setResolvedAccountName] = React.useState('');
     const [phoneNumber, setPhoneNumber] = React.useState('');
     const [network, setNetwork] = React.useState<'mtn' | 'vodafone' | 'airteltigo'>('mtn');
 
     const [otpModalVisible, setOtpModalVisible] = React.useState(false);
     const [otp, setOtp] = React.useState('');
     const [challengeId, setChallengeId] = React.useState<string | null>(null);
+    const [isEditing, setIsEditing] = React.useState(false);
+    const displayNetwork = (account?.network ?? network ?? '').toUpperCase() || 'N/A';
+    const displayPhone = account?.phoneNumber?.trim() ? account.phoneNumber : '-';
+    const displayAccountName = account?.accountName?.trim() ? account.accountName : '-';
 
     const load = React.useCallback(async () => {
-        const next = await mockWalletService.getMomoAccount();
-        setAccount(next);
-        setAccountName(next.accountName);
-        setPhoneNumber(next.phoneNumber);
-        setNetwork(next.network);
-    }, []);
+        try {
+            const next = await walletService.getMomoAccount();
+            setAccount(next);
+            setResolvedAccountName(next.accountName ?? '');
+            setPhoneNumber(next.phoneNumber ?? '');
+            setNetwork(next.network ?? 'mtn');
+        } catch {
+            showToast('Could not load mobile money account right now.', { variant: 'error' });
+        }
+    }, [showToast]);
 
     React.useEffect(() => {
         void load();
     }, [load]);
 
     const handleStartUpdate = React.useCallback(async () => {
-        if (!accountName.trim() || phoneNumber.trim().length < 10) {
-            showToast('Provide account name and valid number.', { variant: 'warning' });
+        if (phoneNumber.trim().length < 10) {
+            showToast('Provide a valid mobile money number.', { variant: 'warning' });
             return;
         }
-        const result = await mockWalletService.beginMomoAccountUpdate({
-            accountName: accountName.trim(),
+        const result = await walletService.beginMomoAccountUpdate({
             phoneNumber: phoneNumber.trim(),
             network,
         });
+        const maybeAccountName = result.accountName;
+        if (maybeAccountName) {
+            setResolvedAccountName(maybeAccountName);
+        }
         setChallengeId(result.challengeId);
         setOtp('');
         setOtpModalVisible(true);
-        showToast(`OTP sent to ${result.maskedPhone}. Use 123456.`, { variant: 'info' });
-    }, [accountName, network, phoneNumber, showToast]);
+        const devOtp = result.otp;
+        if (devOtp) {
+            console.log(`[wallet/momo] dev otp: ${devOtp}`);
+        }
+        showToast(`OTP sent to ${result.maskedPhone}.`, { variant: 'info' });
+    }, [network, phoneNumber, showToast]);
 
     const handleConfirmOtp = React.useCallback(async () => {
         if (!challengeId) return;
-        const result = await mockWalletService.confirmMomoAccountUpdate(challengeId, otp, {
-            accountName: accountName.trim(),
+        const result = await walletService.confirmMomoAccountUpdate(challengeId, otp, {
             phoneNumber: phoneNumber.trim(),
             network,
         });
@@ -63,39 +77,58 @@ export default function MomoAccountScreen() {
         }
         setOtpModalVisible(false);
         setAccount(result.account);
+        setResolvedAccountName(result.account.accountName);
+        setIsEditing(false);
         showToast('MoMo account updated successfully.', { variant: 'success' });
-    }, [accountName, challengeId, network, otp, phoneNumber, showToast]);
+    }, [challengeId, network, otp, phoneNumber, showToast]);
 
     return (
         <Screen title="Mobile Money Account" className="pt-3">
             <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 120 }}>
                 <View className="rounded-2xl border p-4" style={{ borderColor: colors.border, backgroundColor: colors.backgroundAlt }}>
                     <AppText className="text-sm font-semibold" color={colors.textPrimary}>Current Payout Account</AppText>
-                    <AppText className="mt-2 text-sm" color={colors.textPrimary}>{account?.accountName ?? '-'}</AppText>
-                    <AppText className="mt-1 text-xs" color={colors.textSecondary}>{account?.network.toUpperCase()} {account?.phoneNumber}</AppText>
+                    <AppText className="mt-2 text-sm" color={colors.textPrimary}>{displayAccountName}</AppText>
+                    <AppText className="mt-1 text-xs" color={colors.textSecondary}>{displayNetwork} {displayPhone}</AppText>
                     <AppText className="mt-1 text-[11px]" color={account?.isVerified ? colors.success : colors.warning}>
                         {account?.isVerified ? 'VERIFIED' : 'UNVERIFIED'}
                     </AppText>
                 </View>
 
                 <View className="mt-4 rounded-2xl border p-4" style={{ borderColor: colors.border, backgroundColor: colors.backgroundAlt }}>
-                    <AppText className="text-sm font-semibold" color={colors.textPrimary}>Update Details</AppText>
+                    <View className="flex-row items-center justify-between">
+                        <AppText className="text-sm font-semibold" color={colors.textPrimary}>Update Details</AppText>
+                        <Pressable
+                            onPress={() => {
+                                if (isEditing && account) {
+                                    setResolvedAccountName(account.accountName);
+                                    setPhoneNumber(account.phoneNumber);
+                                    setNetwork(account.network);
+                                }
+                                setIsEditing((prev) => !prev);
+                            }}
+                            className="rounded-lg border px-3 py-2"
+                            style={{ borderColor: colors.border, backgroundColor: colors.background }}
+                            accessibilityRole="button"
+                            accessibilityLabel={isEditing ? 'Cancel editing mobile money account' : 'Edit mobile money account'}
+                        >
+                            <AppText className="text-xs font-semibold" color={colors.textPrimary}>
+                                {isEditing ? 'Cancel' : 'Edit'}
+                            </AppText>
+                        </Pressable>
+                    </View>
 
-                    <View className="mt-3 rounded-xl border px-3" style={{ borderColor: colors.border, backgroundColor: colors.background }}>
-                        <TextInput
-                            value={accountName}
-                            onChangeText={setAccountName}
-                            placeholder="Account name"
-                            placeholderTextColor={colors.textSecondary}
-                            style={{ color: colors.textPrimary, paddingVertical: 12 }}
-                            accessibilityLabel="Account name"
-                        />
+                    <View className="mt-3 rounded-xl border px-3 py-3" style={{ borderColor: colors.border, backgroundColor: colors.background }}>
+                        <AppText className="text-[11px]" color={colors.textSecondary}>Account Name (from provider verification)</AppText>
+                        <AppText className="mt-1 text-sm font-semibold" color={colors.textPrimary}>
+                            {resolvedAccountName || 'Will be filled after number verification'}
+                        </AppText>
                     </View>
 
                     <View className="mt-2 rounded-xl border px-3" style={{ borderColor: colors.border, backgroundColor: colors.background }}>
                         <TextInput
                             value={phoneNumber}
                             onChangeText={setPhoneNumber}
+                            editable={isEditing}
                             keyboardType="phone-pad"
                             placeholder="MoMo number"
                             placeholderTextColor={colors.textSecondary}
@@ -114,7 +147,10 @@ export default function MomoAccountScreen() {
                             return (
                                 <Pressable
                                     key={item.id}
-                                    onPress={() => setNetwork(item.id)}
+                                    onPress={() => {
+                                        if (!isEditing) return;
+                                        setNetwork(item.id);
+                                    }}
                                     className="flex-1 rounded-lg py-2"
                                     style={{ backgroundColor: selected ? colors.backgroundAlt : 'transparent' }}
                                     accessibilityRole="button"
@@ -129,8 +165,13 @@ export default function MomoAccountScreen() {
 
                     <Pressable
                         onPress={() => void handleStartUpdate()}
+                        disabled={!isEditing}
                         className="mt-3 rounded-xl border py-3"
-                        style={{ borderColor: colors.border, backgroundColor: colors.background }}
+                        style={{
+                            borderColor: colors.border,
+                            backgroundColor: isEditing ? colors.background : colors.backgroundAlt,
+                            opacity: isEditing ? 1 : 0.6,
+                        }}
                         accessibilityRole="button"
                         accessibilityLabel="Update momo account"
                     >
