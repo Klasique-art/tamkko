@@ -215,9 +215,14 @@ client.interceptors.response.use(
         const status = error?.response?.status;
         const message = toReadableError(error);
         const fullUrl = toResolvedRequestUrl(error?.config);
+        const dataPreview = toErrorPreview(error?.response?.data);
         console.log(
-            `[client] request failed (${error?.config?.method?.toUpperCase()} ${fullUrl ?? error?.config?.url}): ${message}`
+            `[client] request failed (${error?.config?.method?.toUpperCase()} ${fullUrl ?? error?.config?.url}) [status: ${status ?? 'unknown'}]: ${message}`
         );
+        console.log('[client] request failed response', {
+            status: status ?? null,
+            data_preview: dataPreview,
+        });
         if (status >= 500 || !status) {
             console.log('[client] request failed debug', {
                 full_url: fullUrl,
@@ -226,7 +231,7 @@ client.interceptors.response.use(
                 method: error?.config?.method,
                 message: error?.message,
                 status,
-                data_preview: toErrorPreview(error?.response?.data),
+                data_preview: dataPreview,
             });
         }
 

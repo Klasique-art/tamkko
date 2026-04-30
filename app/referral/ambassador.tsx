@@ -1,57 +1,167 @@
 import React from 'react';
-import { Pressable, ScrollView, TextInput, View } from 'react-native';
+import { Href, router } from 'expo-router';
+import { Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, View } from 'react-native';
+import { useFormikContext } from 'formik';
 
-import AppButton from '@/components/ui/AppButton';
+import { AppErrorMessage, AppForm, AppFormField, SubmitButton } from '@/components/form';
 import AppText from '@/components/ui/AppText';
 import Screen from '@/components/ui/Screen';
 import { useColors } from '@/config/colors';
 import { useToast } from '@/context/ToastContext';
-import { mockReferralService } from '@/lib/services/mockReferralService';
-import { AmbassadorInviteStats, AmbassadorStatus } from '@/types/referral.types';
+import { AmbassadorApplicationFormValues, AmbassadorApplicationValidationSchema } from '@/data/referralValidation';
+import { referralService } from '@/lib/services/referralService';
+import { AmbassadorStatus } from '@/types/referral.types';
+
+function SocialLinksFields({ colors }: { colors: ReturnType<typeof useColors> }) {
+    const { values, setFieldValue, errors, touched } = useFormikContext<AmbassadorApplicationFormValues>();
+    const links = values.socialLinks ?? [];
+    const socialErrors = (errors.socialLinks as ({ url?: string } | string)[] | string | undefined);
+    const socialTouched = touched.socialLinks as { url?: boolean }[] | boolean | undefined;
+
+    React.useEffect(() => {
+        if (links.length === 0) {
+            setFieldValue('socialLinks', [{ url: '' }]);
+        }
+    }, [links.length, setFieldValue]);
+
+    return (
+        <View className="mt-1">
+            <AppText className="mb-2 text-sm font-semibold" color={colors.textPrimary}>Social Media Links</AppText>
+            <AppText className="mb-2 text-xs" color={colors.textSecondary}>Add your public profile links (include `https://`).</AppText>
+
+            {links.map((item, index) => {
+                const rowError = Array.isArray(socialErrors) ? socialErrors[index] : undefined;
+                const rowTouched = Array.isArray(socialTouched) ? socialTouched[index] : undefined;
+                const urlError = typeof rowError === 'object' && rowError ? rowError.url : undefined;
+                const urlTouched = typeof rowTouched === 'object' && rowTouched ? rowTouched.url : false;
+
+                return (
+                    <View key={`social_link_${index}`} className="mb-3 rounded-xl border p-3" style={{ borderColor: colors.border, backgroundColor: colors.background }}>
+                        <AppFormField
+                            name={`socialLinks.${index}.url`}
+                            label="Profile Link"
+                            placeholder="e.g. https://instagram.com/yourhandle"
+                            required
+                            type="url"
+                        />
+                        {urlError ? <AppErrorMessage error={urlError} visible={Boolean(urlTouched)} /> : null}
+                        {links.length > 1 ? (
+                            <Pressable
+                                onPress={() => {
+                                    const next = links.filter((_, i) => i !== index);
+                                    setFieldValue('socialLinks', next);
+                                }}
+                                className="mt-2 self-start rounded-lg border px-3 py-2"
+                                style={{ borderColor: colors.border, backgroundColor: colors.backgroundAlt }}
+                                accessibilityRole="button"
+                                accessibilityLabel={`Remove social link ${index + 1}`}
+                            >
+                                <AppText className="text-xs font-semibold" color={colors.textPrimary}>Remove Link</AppText>
+                            </Pressable>
+                        ) : null}
+                    </View>
+                );
+            })}
+
+            <Pressable
+                onPress={() => {
+                    setFieldValue('socialLinks', [...links, { url: '' }]);
+                }}
+                className="rounded-lg border px-3 py-2"
+                style={{ borderColor: colors.border, backgroundColor: colors.background }}
+                accessibilityRole="button"
+                accessibilityLabel="Add another social link"
+            >
+                <AppText className="text-center text-xs font-semibold" color={colors.textPrimary}>Add Another</AppText>
+            </Pressable>
+
+            {typeof socialErrors === 'string' ? <AppErrorMessage error={socialErrors} visible={Boolean(socialTouched)} /> : null}
+        </View>
+    );
+}
 
 export default function AmbassadorScreen() {
     const colors = useColors();
     const { showToast } = useToast();
     const [status, setStatus] = React.useState<AmbassadorStatus | null>(null);
-    const [stats, setStats] = React.useState<AmbassadorInviteStats | null>(null);
-    const [university, setUniversity] = React.useState('University of Ghana');
-    const [reason, setReason] = React.useState('I run creator workshops and can onboard new student creators each month.');
-    const [submitting, setSubmitting] = React.useState(false);
+    const [profileFixMessage, setProfileFixMessage] = React.useState<string | null>(null);
+    const [keyboardInset, setKeyboardInset] = React.useState(0);
+
+    React.useEffect(() => {
+        const showSub = Keyboard.addListener('keyboardDidShow', (event) => {
+            setKeyboardInset(event.endCoordinates?.height ?? 0);
+        });
+        const hideSub = Keyboard.addListener('keyboardDidHide', () => {
+            setKeyboardInset(0);
+        });
+        return () => {
+            showSub.remove();
+            hideSub.remove();
+        };
+    }, []);
 
     React.useEffect(() => {
         const load = async () => {
-            const nextStatus = await mockReferralService.getAmbassadorStatus();
-            setStatus(nextStatus);
-            if (nextStatus.isAmbassador) {
-                const nextStats = await mockReferralService.getAmbassadorInviteStats();
-                setStats(nextStats);
+            try {
+                const nextStatus = await referralService.getAmbassadorStatus();
+                setStatus(nextStatus);
+            } catch {
+                showToast('Could not load ambassador status right now.', { variant: 'error' });
             }
         };
         void load();
-    }, []);
+    }, [showToast]);
 
-    const handleApply = React.useCallback(async () => {
-        if (!university.trim() || !reason.trim()) {
-            showToast('Add university and application reason.', { variant: 'warning' });
-            return;
+    const handleApply = React.useCallback(async (values: AmbassadorApplicationFormValues) => {
+        const gradYear = Number(values.graduationYear);
+        setProfileFixMessage(null);
+        try {
+            const next = await referralService.applyForAmbassador({
+                campus: values.campus.trim(),
+                faculty: values.faculty.trim(),
+                studentId: values.studentId.trim(),
+                graduationYear: gradYear,
+                socialFollowing: (values.socialLinks ?? [])
+                    .map((item) => ({
+                        url: item.url.trim(),
+                    }))
+                    .filter((item) => item.url),
+                whyApply: values.whyApply.trim(),
+            });
+            setStatus(next);
+            showToast('Ambassador application submitted.', { variant: 'success' });
+        } catch (error) {
+            const e = error as {
+                response?: { data?: { message?: string; errors?: { missing_fields?: string[] } } };
+                message?: string;
+            };
+            const message = e?.response?.data?.message ?? e?.message ?? 'Could not submit application.';
+            const missingFields = e?.response?.data?.errors?.missing_fields ?? [];
+            const needsProfileUpdate =
+                /update your full profile details/i.test(message) || (Array.isArray(missingFields) && missingFields.length > 0);
+
+            if (needsProfileUpdate) {
+                const details = missingFields.length > 0 ? ` Missing: ${missingFields.join(', ')}.` : '';
+                setProfileFixMessage(`Please complete your profile before applying.${details}`);
+                showToast('Please complete your profile details first.', { variant: 'warning' });
+            } else {
+                showToast(message, { variant: 'error' });
+            }
         }
+    }, [showToast]);
 
-        setSubmitting(true);
-        const next = await mockReferralService.applyForAmbassador({ university: university.trim(), reason: reason.trim() });
-        setStatus(next);
-        setSubmitting(false);
-        showToast('Ambassador application submitted.', { variant: 'success' });
-    }, [reason, showToast, university]);
-
-    const progress = React.useMemo(() => {
-        if (!stats) return 0;
-        if (stats.totalInvites <= 0) return 0;
-        return Math.min(1, stats.approvedCreators / stats.totalInvites);
-    }, [stats]);
+    const hasApprovedAmbassadorAccess = Boolean(status?.isAmbassador || status?.status === 'approved');
 
     return (
         <Screen title="Campus Ambassador" className="pt-2">
-            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 120 }}>
+            <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
+                <ScrollView
+                    keyboardShouldPersistTaps="handled"
+                    keyboardDismissMode="none"
+                    automaticallyAdjustKeyboardInsets
+                    showsVerticalScrollIndicator={false}
+                    contentContainerStyle={{ paddingBottom: 180 + keyboardInset, flexGrow: 1 }}
+                >
                 <View className="rounded-3xl border p-5" style={{ borderColor: colors.border, backgroundColor: colors.primary }}>
                     <AppText className="text-lg font-extrabold" color={colors.white}>Campus Ambassador Program</AppText>
                     <AppText className="mt-1 text-sm" color="rgba(255,255,255,0.92)">
@@ -72,75 +182,71 @@ export default function AmbassadorScreen() {
                     ) : null}
                 </View>
 
-                {status?.isAmbassador ? (
+                {hasApprovedAmbassadorAccess ? (
                     <View className="mt-4 rounded-2xl border p-4" style={{ borderColor: colors.border, backgroundColor: colors.backgroundAlt }}>
-                        <AppText className="text-sm font-semibold" color={colors.textPrimary}>Ambassador Stats</AppText>
-                        <View className="mt-3 flex-row">
-                            <View className="flex-1 rounded-xl px-3 py-3" style={{ backgroundColor: colors.background }}>
-                                <AppText className="text-xs" color={colors.textSecondary}>Campus</AppText>
-                                <AppText className="mt-1 text-sm font-bold" color={colors.textPrimary}>{stats?.campus ?? '-'}</AppText>
-                            </View>
-                            <View className="ml-2 flex-1 rounded-xl px-3 py-3" style={{ backgroundColor: colors.background }}>
-                                <AppText className="text-xs" color={colors.textSecondary}>Invites</AppText>
-                                <AppText className="mt-1 text-sm font-bold" color={colors.textPrimary}>{stats?.totalInvites ?? 0}</AppText>
-                            </View>
-                        </View>
-                        <View className="mt-2 flex-row">
-                            <View className="flex-1 rounded-xl px-3 py-3" style={{ backgroundColor: colors.background }}>
-                                <AppText className="text-xs" color={colors.textSecondary}>Approved</AppText>
-                                <AppText className="mt-1 text-sm font-bold" color={colors.textPrimary}>{stats?.approvedCreators ?? 0}</AppText>
-                            </View>
-                            <View className="ml-2 flex-1 rounded-xl px-3 py-3" style={{ backgroundColor: colors.background }}>
-                                <AppText className="text-xs" color={colors.textSecondary}>This Month</AppText>
-                                <AppText className="mt-1 text-sm font-bold" color={colors.textPrimary}>GHS {(stats?.thisMonthRewardGhs ?? 0).toFixed(2)}</AppText>
-                            </View>
-                        </View>
-
-                        <View className="mt-3 rounded-xl border p-3" style={{ borderColor: colors.border, backgroundColor: colors.background }}>
-                            <AppText className="text-xs" color={colors.textSecondary}>Invite Conversion</AppText>
-                            <View className="mt-2 h-3 overflow-hidden rounded-full" style={{ backgroundColor: `${colors.border}` }}>
-                                <View style={{ width: `${progress * 100}%`, height: '100%', backgroundColor: colors.accent }} />
-                            </View>
-                            <AppText className="mt-1 text-xs" color={colors.textSecondary}>
-                                {Math.round(progress * 100)}% of invited creators became approved creators.
-                            </AppText>
-                        </View>
+                        <AppText className="text-sm font-semibold" color={colors.textPrimary}>Ambassador Access Active</AppText>
+                        <AppText className="mt-2 text-xs" color={colors.textSecondary}>
+                            Your ambassador status is approved. Higher referral rewards are now active on your account.
+                        </AppText>
                     </View>
                 ) : (
                     <View className="mt-4 rounded-2xl border p-4" style={{ borderColor: colors.border, backgroundColor: colors.backgroundAlt }}>
                         <AppText className="text-sm font-semibold" color={colors.textPrimary}>Apply to Become an Ambassador</AppText>
 
-                        <View className="mt-3 rounded-xl border px-3" style={{ borderColor: colors.border, backgroundColor: colors.background }}>
-                            <TextInput
-                                value={university}
-                                onChangeText={setUniversity}
-                                placeholder="University / Campus"
-                                placeholderTextColor={colors.textSecondary}
-                                style={{ color: colors.textPrimary, paddingVertical: 12 }}
-                                accessibilityLabel="University"
-                            />
-                        </View>
-
-                        <View className="mt-2 rounded-xl border px-3" style={{ borderColor: colors.border, backgroundColor: colors.background }}>
-                            <TextInput
-                                value={reason}
-                                onChangeText={setReason}
-                                placeholder="Why should we approve you?"
-                                placeholderTextColor={colors.textSecondary}
-                                multiline
-                                style={{ color: colors.textPrimary, minHeight: 96, paddingVertical: 10, textAlignVertical: 'top' }}
-                                accessibilityLabel="Application reason"
-                            />
-                        </View>
-
-                        <AppButton
-                            title={submitting ? 'Submitting...' : 'Submit Application'}
-                            onClick={() => {
-                                void handleApply();
+                        <AppForm<AmbassadorApplicationFormValues>
+                            initialValues={{
+                                campus: 'University of Ghana',
+                                faculty: 'Engineering',
+                                studentId: 'UG123',
+                                graduationYear: '2027',
+                                socialLinks: [{ url: 'https://instagram.com/yourhandle' }],
+                                whyApply: 'I can grow campus adoption.',
                             }}
-                            loading={submitting}
-                            style={{ marginTop: 12 }}
-                        />
+                            validationSchema={AmbassadorApplicationValidationSchema}
+                            onSubmit={async (values, { setSubmitting }) => {
+                                try {
+                                    await handleApply(values);
+                                } finally {
+                                    setSubmitting(false);
+                                }
+                            }}
+                        >
+                            <View className="mt-3">
+                                <AppFormField name="campus" label="Campus" placeholder="e.g. University of Ghana" required />
+                            </View>
+                            <AppFormField name="faculty" label="Faculty" placeholder="e.g. Engineering" required />
+                            <AppFormField name="studentId" label="Student ID" placeholder="e.g. UG12345" required />
+                            <AppFormField name="graduationYear" label="Graduation Year" placeholder="e.g. 2027" type="number" required />
+                            <SocialLinksFields colors={colors} />
+                            <AppFormField
+                                name="whyApply"
+                                label="Why You Are Applying"
+                                placeholder="e.g. I can grow creator adoption on my campus through events and workshops."
+                                multiline
+                                numberOfLines={5}
+                                required
+                            />
+
+                            <View className="mt-1">
+                                <SubmitButton title="Submit Application" />
+                            </View>
+                        </AppForm>
+
+                        {profileFixMessage ? (
+                            <View className="mt-3 rounded-xl border p-3" style={{ borderColor: `${colors.warning}66`, backgroundColor: `${colors.warning}10` }}>
+                                <AppText className="text-sm font-semibold" color={colors.warning}>Profile Update Required</AppText>
+                                <AppText className="mt-1 text-xs" color={colors.textSecondary}>{profileFixMessage}</AppText>
+                                <Pressable
+                                    onPress={() => router.push('/profile/edit' as Href)}
+                                    className="mt-3 rounded-lg border py-2"
+                                    style={{ borderColor: colors.border, backgroundColor: colors.background }}
+                                    accessibilityRole="button"
+                                    accessibilityLabel="Go to edit profile"
+                                >
+                                    <AppText className="text-center text-xs font-semibold" color={colors.textPrimary}>Go To Edit Profile</AppText>
+                                </Pressable>
+                            </View>
+                        ) : null}
                     </View>
                 )}
 
@@ -156,7 +262,8 @@ export default function AmbassadorScreen() {
                         </AppText>
                     </Pressable>
                 ) : null}
-            </ScrollView>
+                </ScrollView>
+            </KeyboardAvoidingView>
         </Screen>
     );
 }

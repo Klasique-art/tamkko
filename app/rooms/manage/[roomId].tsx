@@ -9,7 +9,7 @@ import AppText from '@/components/ui/AppText';
 import Screen from '@/components/ui/Screen';
 import { useColors } from '@/config/colors';
 import { useToast } from '@/context/ToastContext';
-import { mockRoomCommunityService } from '@/lib/services/mockRoomCommunityService';
+import { roomService } from '@/lib/services/roomService';
 import { RoomCreatorCode, VipRoom } from '@/types/room.types';
 
 const CODE_TYPES: { label: string; value: RoomCreatorCode['discountType'] }[] = [
@@ -24,8 +24,33 @@ const formatDate = (dateIso: string | null) => {
     return date.toLocaleDateString();
 };
 
+const sanitizeMoneyInput = (raw: string) => {
+    const cleaned = raw.replace(/[^0-9.]/g, '');
+    const [whole = '', ...rest] = cleaned.split('.');
+    const wholeCapped = whole.slice(0, 2);
+    if (rest.length === 0) return wholeCapped;
+    const decimal = rest.join('').slice(0, 2);
+    return `${wholeCapped}.${decimal}`;
+};
+
+const mapAccessPassToCode = (raw: any): RoomCreatorCode => ({
+    id: String(raw?.id ?? raw?._id ?? ''),
+    roomId: String(raw?.room_id ?? raw?.roomId ?? ''),
+    label: String(raw?.label ?? 'Promo Code'),
+    code: String(raw?.code ?? raw?.code_string ?? ''),
+    discountType: (raw?.discount_type ?? raw?.discountType ?? 'free') as RoomCreatorCode['discountType'],
+    discountAmount: Number(raw?.discount_amount_ghs ?? raw?.discountAmount ?? 0) || 0,
+    maxUses: raw?.max_uses == null ? null : Number(raw.max_uses),
+    usedCount: Number(raw?.used_count ?? raw?.usedCount ?? 0) || 0,
+    expiresAt: raw?.expires_at ?? raw?.expiresAt ?? null,
+    campus: raw?.campus ?? null,
+    isActive: Boolean(raw?.is_active ?? raw?.isActive ?? true),
+    createdAt: String(raw?.created_at ?? raw?.createdAt ?? new Date().toISOString()),
+});
+
 export default function RoomManageScreen() {
     const colors = useColors();
+    const placeholderColor = colors.background === '#121212' ? '#8A8A8A' : colors.textSecondary;
     const { showToast } = useToast();
     const { roomId } = useLocalSearchParams<{ roomId: string }>();
 
@@ -37,13 +62,13 @@ export default function RoomManageScreen() {
     const [name, setName] = useState('');
     const [description, setDescription] = useState('');
     const [entryFee, setEntryFee] = useState('0');
-    const [capacity, setCapacity] = useState('500');
     const [welcomeMessage, setWelcomeMessage] = useState('');
     const [isPublic, setIsPublic] = useState(true);
     const [allowTips, setAllowTips] = useState(true);
 
     const [showCodeModal, setShowCodeModal] = useState(false);
     const [selectedCode, setSelectedCode] = useState<RoomCreatorCode | null>(null);
+    const [editingCodeId, setEditingCodeId] = useState<string | null>(null);
     const [codeLabel, setCodeLabel] = useState('Campus Promo');
     const [codeCampus, setCodeCampus] = useState('');
     const [codeType, setCodeType] = useState<RoomCreatorCode['discountType']>('free');
@@ -54,19 +79,15 @@ export default function RoomManageScreen() {
     const load = useCallback(async () => {
         if (!roomId) return;
         setLoading(true);
-        const [nextRoom, nextCodes] = await Promise.all([
-            mockRoomCommunityService.getRoomById(roomId),
-            mockRoomCommunityService.listCreatorCodes(roomId),
-        ]);
+        const [nextRoom, nextCodesRaw] = await Promise.all([roomService.getRoom(roomId), roomService.listAccessPasses(roomId)]);
 
         setRoom(nextRoom);
-        setCodes(nextCodes);
+        setCodes(nextCodesRaw.map(mapAccessPassToCode));
 
         if (nextRoom) {
             setName(nextRoom.name);
             setDescription(nextRoom.description);
             setEntryFee(nextRoom.entryFee.toFixed(2));
-            setCapacity(String(nextRoom.capacity));
             setWelcomeMessage(nextRoom.welcomeMessage || '');
             setIsPublic(nextRoom.isPublic);
             setAllowTips(nextRoom.allowTips);
@@ -80,27 +101,26 @@ export default function RoomManageScreen() {
 
     const validation = useMemo(() => {
         if (!room) return 'Room not available.';
-        const fee = Number(entryFee);
-        const cap = Number(capacity);
+        const normalizedEntryFee = entryFee.trim();
+        const fee = Number(normalizedEntryFee);
+        const validMoneyFormat = /^(\d{1,2})(\.\d{1,2})?$/.test(normalizedEntryFee);
         if (name.trim().length < 3) return 'Name must be at least 3 characters.';
         if (description.trim().length < 10) return 'Description must be at least 10 characters.';
+        if (!validMoneyFormat) return 'Entry fee must be a valid amount with max 2 digits and up to 2 decimals.';
         if (!Number.isFinite(fee) || fee < 0) return 'Entry fee must be a valid number.';
-        if (!Number.isFinite(cap) || cap < room.memberCount) return `Capacity cannot be below current members (${room.memberCount}).`;
-        if (cap > 2000) return 'Capacity should be 2000 or less in MVP.';
         return null;
-    }, [capacity, description, entryFee, name, room]);
+    }, [description, entryFee, name, room]);
 
     const handleSave = async () => {
         if (!room || validation || saving) return;
         setSaving(true);
-        const updated = await mockRoomCommunityService.updateRoomSettings(room.id, {
+        const updated = await roomService.updateRoom(room.id, {
             name,
             description,
-            entryFee: Number(Number(entryFee).toFixed(2)),
-            capacity: Math.floor(Number(capacity)),
-            welcomeMessage,
-            isPublic,
-            allowTips,
+            entry_fee_ghs: Number(Number(entryFee).toFixed(2)).toFixed(2),
+            welcome_message: welcomeMessage,
+            is_public: isPublic,
+            allow_tips: allowTips,
         });
         setSaving(false);
         if (!updated) {
@@ -113,16 +133,12 @@ export default function RoomManageScreen() {
     };
 
     const handleCloseRoom = async () => {
-        if (!room) return;
-        const updated = await mockRoomCommunityService.closeRoom(room.id, 'Session closed by creator.');
-        if (!updated) return;
-        setRoom(updated);
-        showToast('Room closed for now.', { variant: 'warning', duration: 2200 });
+        showToast('Room closing is pending backend support. Delete room if needed.', { variant: 'info', duration: 2600 });
     };
 
     const handleDeleteRoom = async () => {
         if (!room) return;
-        const deleted = await mockRoomCommunityService.deleteRoom(room.id);
+        const deleted = await roomService.deleteRoom(room.id);
         if (!deleted) {
             showToast('Unable to delete room.', { variant: 'error', duration: 2200 });
             return;
@@ -132,42 +148,96 @@ export default function RoomManageScreen() {
         router.replace('/rooms');
     };
 
-    const handleGenerateCode = async () => {
+    const resetCodeForm = () => {
+        setEditingCodeId(null);
+        setCodeLabel('Campus Promo');
+        setCodeCampus('');
+        setCodeType('free');
+        setCodeAmount('0');
+        setCodeMaxUses('200');
+        setCodeExpiresAt('');
+    };
+
+    const openCreateCodeModal = () => {
+        resetCodeForm();
+        setShowCodeModal(true);
+    };
+
+    const openEditCodeModal = (code: RoomCreatorCode) => {
+        setEditingCodeId(code.id);
+        setCodeLabel(code.label);
+        setCodeCampus(code.campus ?? '');
+        setCodeType(code.discountType);
+        setCodeAmount(String(code.discountAmount));
+        setCodeMaxUses(code.maxUses === null ? '' : String(code.maxUses));
+        setCodeExpiresAt(code.expiresAt ?? '');
+        setShowCodeModal(true);
+    };
+
+    const handleSaveCode = async () => {
         if (!roomId) return;
 
         const discountAmount = Number(codeAmount);
         const maxUses = Number(codeMaxUses);
+        if (editingCodeId) {
+            const updatedRaw = await roomService.updateAccessPass(editingCodeId, {
+                label: codeLabel,
+                campus: codeCampus.trim() || null,
+                discount_type: codeType,
+                discount_amount_ghs: Number.isFinite(discountAmount) ? discountAmount : 0,
+                max_uses: Number.isFinite(maxUses) ? Math.floor(maxUses) : null,
+                expires_at: codeExpiresAt.trim() || null,
+            });
+            const updated = mapAccessPassToCode((updatedRaw as any)?.access_pass ?? updatedRaw);
+            if (updated) {
+                setCodes((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
+                showToast(`Access pass ${updated.code} updated.`, { variant: 'success', duration: 2200 });
+            }
+            setShowCodeModal(false);
+            resetCodeForm();
+            return;
+        }
 
-        const created = await mockRoomCommunityService.generateCreatorCode(roomId, {
+        const createdRaw = await roomService.createAccessPass({
+            room_id: roomId,
             label: codeLabel,
             campus: codeCampus.trim() || null,
-            discountType: codeType,
-            discountAmount: Number.isFinite(discountAmount) ? discountAmount : 0,
-            maxUses: Number.isFinite(maxUses) ? Math.floor(maxUses) : null,
-            expiresAt: codeExpiresAt.trim() || null,
+            discount_type: codeType,
+            discount_amount_ghs: Number.isFinite(discountAmount) ? discountAmount : 0,
+            max_uses: Number.isFinite(maxUses) ? Math.floor(maxUses) : null,
+            expires_at: codeExpiresAt.trim() || null,
+            is_active: true,
         });
+        const created = mapAccessPassToCode((createdRaw as any)?.access_pass ?? createdRaw);
 
         setCodes((prev) => [created, ...prev]);
         setShowCodeModal(false);
-        showToast(`Code ${created.code} created.`, { variant: 'success', duration: 2200 });
+        resetCodeForm();
+        showToast(`Access pass ${created.code} created.`, { variant: 'success', duration: 2200 });
     };
 
     const handleToggleCode = async (code: RoomCreatorCode) => {
         if (!roomId) return;
-        const next = await mockRoomCommunityService.setCreatorCodeActive(roomId, code.id, !code.isActive);
-        if (!next) return;
+        const nextRaw = await roomService.updateAccessPass(code.id, { is_active: !code.isActive });
+        const next = mapAccessPassToCode((nextRaw as any)?.access_pass ?? nextRaw);
         setCodes((prev) => prev.map((item) => (item.id === code.id ? next : item)));
     };
 
     const handleViewCodeStats = async (code: RoomCreatorCode) => {
         if (!roomId) return;
-        const stats = await mockRoomCommunityService.getCreatorCodeStats(roomId, code.id);
-        if (!stats) return;
         setSelectedCode(code);
         showToast(
-            `${code.code}: ${stats.usesCount} uses, waived GHS ${stats.revenueWaivedGhs.toFixed(2)}`,
+            `${code.code}: ${code.usedCount} uses so far.`,
             { variant: 'info', duration: 3200 }
         );
+    };
+
+    const handleDeleteCode = async (code: RoomCreatorCode) => {
+        if (!roomId) return;
+        const ok = await roomService.deleteAccessPass(code.id);
+        if (!ok) return;
+        setCodes((prev) => prev.filter((item) => item.id !== code.id));
+        showToast(`Access pass ${code.code} deleted.`, { variant: 'warning', duration: 2200 });
     };
 
     if (loading) {
@@ -228,7 +298,7 @@ export default function RoomManageScreen() {
                     <TextInput
                         value={name}
                         onChangeText={setName}
-                        placeholderTextColor={colors.textSecondary}
+                        placeholderTextColor={placeholderColor}
                         style={{
                             borderColor: colors.border,
                             backgroundColor: colors.background,
@@ -250,7 +320,7 @@ export default function RoomManageScreen() {
                         onChangeText={setDescription}
                         multiline
                         numberOfLines={4}
-                        placeholderTextColor={colors.textSecondary}
+                        placeholderTextColor={placeholderColor}
                         style={{
                             borderColor: colors.border,
                             backgroundColor: colors.background,
@@ -265,47 +335,25 @@ export default function RoomManageScreen() {
                     />
                 </View>
 
-                <View className="mt-3 flex-row">
-                    <View className="mr-2 flex-1">
-                        <AppText className="mb-1 text-sm font-semibold" color={colors.textPrimary}>
-                            Entry Fee
-                        </AppText>
-                        <TextInput
-                            value={entryFee}
-                            onChangeText={setEntryFee}
-                            keyboardType="decimal-pad"
-                            placeholderTextColor={colors.textSecondary}
-                            style={{
-                                borderColor: colors.border,
-                                backgroundColor: colors.background,
-                                borderWidth: 1,
-                                borderRadius: 12,
-                                color: colors.textPrimary,
-                                paddingHorizontal: 12,
-                                paddingVertical: 12,
-                            }}
-                        />
-                    </View>
-                    <View className="flex-1">
-                        <AppText className="mb-1 text-sm font-semibold" color={colors.textPrimary}>
-                            Capacity
-                        </AppText>
-                        <TextInput
-                            value={capacity}
-                            onChangeText={setCapacity}
-                            keyboardType="number-pad"
-                            placeholderTextColor={colors.textSecondary}
-                            style={{
-                                borderColor: colors.border,
-                                backgroundColor: colors.background,
-                                borderWidth: 1,
-                                borderRadius: 12,
-                                color: colors.textPrimary,
-                                paddingHorizontal: 12,
-                                paddingVertical: 12,
-                            }}
-                        />
-                    </View>
+                <View className="mt-3">
+                    <AppText className="mb-1 text-sm font-semibold" color={colors.textPrimary}>
+                        Entry Fee
+                    </AppText>
+                    <TextInput
+                        value={entryFee}
+                        onChangeText={(value) => setEntryFee(sanitizeMoneyInput(value))}
+                        keyboardType="decimal-pad"
+                        placeholderTextColor={placeholderColor}
+                        style={{
+                            borderColor: colors.border,
+                            backgroundColor: colors.background,
+                            borderWidth: 1,
+                            borderRadius: 12,
+                            color: colors.textPrimary,
+                            paddingHorizontal: 12,
+                            paddingVertical: 12,
+                        }}
+                    />
                 </View>
 
                 <View className="mt-3">
@@ -317,7 +365,7 @@ export default function RoomManageScreen() {
                         onChangeText={setWelcomeMessage}
                         multiline
                         numberOfLines={3}
-                        placeholderTextColor={colors.textSecondary}
+                        placeholderTextColor={placeholderColor}
                         style={{
                             borderColor: colors.border,
                             backgroundColor: colors.background,
@@ -379,14 +427,14 @@ export default function RoomManageScreen() {
                 <View className="mt-5 rounded-2xl border px-4 py-4" style={{ borderColor: colors.border, backgroundColor: colors.backgroundAlt }}>
                     <View className="flex-row items-center justify-between">
                         <AppText className="text-base font-bold" color={colors.textPrimary}>
-                            Creator Codes
+                            Promo Codes
                         </AppText>
                         <Pressable
-                            onPress={() => setShowCodeModal(true)}
+                            onPress={openCreateCodeModal}
                             className="rounded-full border px-3 py-1"
                             style={{ borderColor: colors.border, backgroundColor: colors.background }}
                             accessibilityRole="button"
-                            accessibilityLabel="Generate creator code"
+                            accessibilityLabel="Create promo code"
                         >
                             <AppText className="text-xs font-semibold" color={colors.textPrimary}>
                                 New Code
@@ -397,7 +445,7 @@ export default function RoomManageScreen() {
                     <View className="mt-3">
                         {codes.length === 0 ? (
                             <AppText className="text-sm" color={colors.textSecondary}>
-                                No creator codes yet.
+                                No promo codes yet.
                             </AppText>
                         ) : (
                             codes.map((code) => (
@@ -408,9 +456,9 @@ export default function RoomManageScreen() {
                                 >
                                     <View className="flex-row items-center justify-between">
                                         <View className="flex-1 pr-2">
-                                            <AppText className="text-sm font-semibold" color={colors.textPrimary}>
-                                                {code.label}
-                                            </AppText>
+                                                <AppText className="text-sm font-semibold" color={colors.textPrimary}>
+                                                    {code.label}
+                                                </AppText>
                                             <AppText className="text-xs" color={colors.textSecondary}>
                                                 {code.code} • {code.discountType}
                                                 {code.discountType !== 'free' ? ` (${code.discountAmount})` : ''}
@@ -420,6 +468,17 @@ export default function RoomManageScreen() {
                                             </AppText>
                                         </View>
                                         <View className="flex-row">
+                                            <Pressable
+                                                onPress={() => openEditCodeModal(code)}
+                                                className="mr-2 rounded-lg border px-2 py-2"
+                                                style={{ borderColor: colors.border, backgroundColor: colors.backgroundAlt }}
+                                                accessibilityRole="button"
+                                                accessibilityLabel={`Edit promo code ${code.code}`}
+                                            >
+                                                <AppText className="text-xs font-semibold" color={colors.textPrimary}>
+                                                    Edit
+                                                </AppText>
+                                            </Pressable>
                                             <Pressable
                                                 onPress={() => {
                                                     void handleToggleCode(code);
@@ -444,6 +503,19 @@ export default function RoomManageScreen() {
                                             >
                                                 <AppText className="text-xs font-semibold" color={colors.textPrimary}>
                                                     Stats
+                                                </AppText>
+                                            </Pressable>
+                                            <Pressable
+                                                onPress={() => {
+                                                    void handleDeleteCode(code);
+                                                }}
+                                                className="ml-2 rounded-lg border px-2 py-2"
+                                                style={{ borderColor: `${colors.error}66`, backgroundColor: `${colors.error}14` }}
+                                                accessibilityRole="button"
+                                                accessibilityLabel={`Delete promo code ${code.code}`}
+                                            >
+                                                <AppText className="text-xs font-semibold" color={colors.error}>
+                                                    Delete
                                                 </AppText>
                                             </Pressable>
                                         </View>
@@ -507,14 +579,14 @@ export default function RoomManageScreen() {
                 ) : null}
             </ScrollView>
 
-            <AppModal visible={showCodeModal} onClose={() => setShowCodeModal(false)} title="Generate Creator Code">
+            <AppModal visible={showCodeModal} onClose={() => setShowCodeModal(false)} title={editingCodeId ? 'Edit Promo Code' : 'Create Promo Code'}>
                 <View>
                     <View className="rounded-xl border px-3" style={{ borderColor: colors.border, backgroundColor: colors.backgroundAlt }}>
                         <TextInput
                             value={codeLabel}
                             onChangeText={setCodeLabel}
                             placeholder="Code label"
-                            placeholderTextColor={colors.textSecondary}
+                            placeholderTextColor={placeholderColor}
                             style={{ color: colors.textPrimary, paddingVertical: 12 }}
                             accessibilityLabel="Code label"
                         />
@@ -525,7 +597,7 @@ export default function RoomManageScreen() {
                             value={codeCampus}
                             onChangeText={setCodeCampus}
                             placeholder="Campus (optional)"
-                            placeholderTextColor={colors.textSecondary}
+                            placeholderTextColor={placeholderColor}
                             style={{ color: colors.textPrimary, paddingVertical: 12 }}
                             accessibilityLabel="Campus"
                         />
@@ -558,7 +630,7 @@ export default function RoomManageScreen() {
                                 onChangeText={setCodeAmount}
                                 keyboardType="decimal-pad"
                                 placeholder={codeType === 'percent' ? 'Discount percent' : 'Discount amount GHS'}
-                                placeholderTextColor={colors.textSecondary}
+                                placeholderTextColor={placeholderColor}
                                 style={{ color: colors.textPrimary, paddingVertical: 12 }}
                                 accessibilityLabel="Discount amount"
                             />
@@ -571,7 +643,7 @@ export default function RoomManageScreen() {
                             onChangeText={setCodeMaxUses}
                             keyboardType="number-pad"
                             placeholder="Max uses"
-                            placeholderTextColor={colors.textSecondary}
+                            placeholderTextColor={placeholderColor}
                             style={{ color: colors.textPrimary, paddingVertical: 12 }}
                             accessibilityLabel="Maximum uses"
                         />
@@ -582,13 +654,13 @@ export default function RoomManageScreen() {
                             value={codeExpiresAt}
                             onChangeText={setCodeExpiresAt}
                             placeholder="Expiry date ISO (optional)"
-                            placeholderTextColor={colors.textSecondary}
+                            placeholderTextColor={placeholderColor}
                             style={{ color: colors.textPrimary, paddingVertical: 12 }}
                             accessibilityLabel="Expiry date"
                         />
                     </View>
 
-                    <AppButton title="Generate Code" onClick={() => void handleGenerateCode()} style={{ marginTop: 12 }} />
+                    <AppButton title={editingCodeId ? 'Save Promo Code' : 'Create Promo Code'} onClick={() => void handleSaveCode()} style={{ marginTop: 12 }} />
                 </View>
             </AppModal>
         </Screen>

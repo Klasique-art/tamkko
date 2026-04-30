@@ -20,8 +20,10 @@ import AppModal from '@/components/ui/AppModal';
 import AppText from '@/components/ui/AppText';
 import Screen from '@/components/ui/Screen';
 import { useColors } from '@/config/colors';
+import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/context/ToastContext';
 import { mockRoomCommunityService } from '@/lib/services/mockRoomCommunityService';
+import { roomService } from '@/lib/services/roomService';
 import { RoomChatMessage, RoomMember, VipRoom } from '@/types/room.types';
 
 const REACTIONS: { emoji: string; label: string }[] = [
@@ -42,6 +44,7 @@ const formatMessageTime = (iso: string) => {
 export default function RoomChatScreen() {
     const colors = useColors();
     const { showToast } = useToast();
+    const { user } = useAuth();
     const insets = useSafeAreaInsets();
     const { roomId } = useLocalSearchParams<{ roomId: string }>();
 
@@ -52,6 +55,7 @@ export default function RoomChatScreen() {
     const [messageText, setMessageText] = useState('');
     const [showMembersModal, setShowMembersModal] = useState(false);
     const [showTipModal, setShowTipModal] = useState(false);
+    const [showHeaderMenu, setShowHeaderMenu] = useState(false);
     const [tipAmount, setTipAmount] = useState('20');
     const [tipMessage, setTipMessage] = useState('Thanks for building this room.');
     const [floatingReaction, setFloatingReaction] = useState<string | null>(null);
@@ -66,15 +70,20 @@ export default function RoomChatScreen() {
         if (!roomId) return;
 
         setLoading(true);
-        const [nextRoom, nextMessages, nextMembers] = await Promise.all([
-            mockRoomCommunityService.getRoomById(roomId),
-            mockRoomCommunityService.getRoomMessages(roomId),
-            mockRoomCommunityService.getRoomMembers(roomId),
-        ]);
-
-        setRoom(nextRoom);
-        setMessages(nextMessages);
-        setMembers(nextMembers);
+        try {
+            const [nextRoom, nextMessages, nextMembers] = await Promise.all([
+                roomService.getRoom(roomId),
+                mockRoomCommunityService.getRoomMessages(roomId),
+                mockRoomCommunityService.getRoomMembers(roomId),
+            ]);
+            setRoom(nextRoom);
+            setMessages(nextMessages);
+            setMembers(nextMembers);
+        } catch {
+            setRoom(null);
+            setMessages([]);
+            setMembers([]);
+        }
         setLoading(false);
     }, [roomId]);
 
@@ -208,9 +217,38 @@ export default function RoomChatScreen() {
         showToast(`Tip sent: GHS ${amount.toFixed(2)}.`, { variant: 'success', duration: 2200 });
     };
 
-    const isCreator = room?.role === 'creator';
+    const handleDeleteGroup = async () => {
+        if (!room || !isCreator) return;
+        try {
+            const ok = await roomService.deleteRoom(room.id);
+            if (!ok) {
+                showToast('Unable to delete group right now.', { variant: 'error', duration: 2200 });
+                return;
+            }
+            setShowHeaderMenu(false);
+            showToast('Group deleted.', { variant: 'success', duration: 2200 });
+            router.replace('/rooms');
+        } catch {
+            showToast('Unable to delete group right now.', { variant: 'error', duration: 2200 });
+        }
+    };
+
+    const handleLeaveGroup = async () => {
+        setShowHeaderMenu(false);
+        showToast('Leave group is pending backend endpoint.', { variant: 'info', duration: 2400 });
+    };
+
+    const currentUserId = String(user?._id ?? user?.user_id ?? '');
+    const isCreator = Boolean(
+        room &&
+        (
+            room.role === 'creator' ||
+            (currentUserId && room.creatorId === currentUserId) ||
+            (user?.username && room.creatorUsername === user.username)
+        )
+    );
     const canAccessRoom = Boolean(
-        room && (room.role === 'creator' || room.entryFee === 0 ? room.hasJoined : room.hasJoined && room.hasPaid)
+        room && (isCreator || room.entryFee === 0 ? room.hasJoined : room.hasJoined && room.hasPaid)
     );
 
     if (loading) {
@@ -365,7 +403,23 @@ export default function RoomChatScreen() {
     };
 
     return (
-        <Screen title={room.name} className="pt-2">
+        <Screen
+            title={room.name || 'Room'}
+            className="pt-2"
+            topNavRight={
+                <Pressable
+                    onPress={() => setShowHeaderMenu((prev) => !prev)}
+                    className="h-10 w-10 items-center justify-center rounded-full"
+                    accessibilityRole="button"
+                    accessibilityLabel="Open room options"
+                    accessibilityHint="Shows room actions in a dropdown menu"
+                    accessibilityState={{ expanded: showHeaderMenu }}
+                    hitSlop={8}
+                >
+                    <Ionicons name="ellipsis-vertical" size={20} color={colors.textPrimary} />
+                </Pressable>
+            }
+        >
             <KeyboardAvoidingView
                 behavior={Platform.OS === 'ios' ? 'padding' : undefined}
                 keyboardVerticalOffset={Platform.OS === 'ios' ? 8 : 0}
@@ -523,6 +577,87 @@ export default function RoomChatScreen() {
                 </View>
             </KeyboardAvoidingView>
 
+            {showHeaderMenu ? (
+                <View
+                    pointerEvents="box-none"
+                    style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
+                    accessible
+                    accessibilityLabel="Room options menu"
+                >
+                    <Pressable
+                        style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
+                        onPress={() => setShowHeaderMenu(false)}
+                        accessibilityRole="button"
+                        accessibilityLabel="Close room options menu"
+                    />
+                    <View
+                        style={{
+                            position: 'absolute',
+                            top: 54,
+                            right: 10,
+                            minWidth: 190,
+                            borderRadius: 12,
+                            borderWidth: 1,
+                            borderColor: colors.border,
+                            backgroundColor: colors.backgroundAlt,
+                            padding: 8,
+                            shadowColor: '#000000',
+                            shadowOpacity: 0.16,
+                            shadowRadius: 10,
+                            shadowOffset: { width: 0, height: 4 },
+                            elevation: 8,
+                        }}
+                    >
+                        {isCreator ? (
+                            <Pressable
+                                onPress={() => {
+                                    setShowHeaderMenu(false);
+                                    router.push(`/rooms/manage/${room.id}`);
+                                }}
+                                className="rounded-lg px-3 py-3"
+                                accessibilityRole="button"
+                                accessibilityLabel="Manage group"
+                                accessibilityHint="Opens room management settings"
+                            >
+                                <AppText className="text-sm font-semibold" color={colors.textPrimary}>
+                                    Manage Group
+                                </AppText>
+                            </Pressable>
+                        ) : (
+                            <Pressable
+                                onPress={() => {
+                                    void handleLeaveGroup();
+                                }}
+                                className="rounded-lg px-3 py-3"
+                                accessibilityRole="button"
+                                accessibilityLabel="Leave group"
+                                accessibilityHint="Leaves this room and returns to rooms list"
+                            >
+                                <AppText className="text-sm font-semibold" color={colors.textPrimary}>
+                                    Leave Group
+                                </AppText>
+                            </Pressable>
+                        )}
+
+                        {isCreator ? (
+                            <Pressable
+                                onPress={() => {
+                                    void handleDeleteGroup();
+                                }}
+                                className="mt-1 rounded-lg px-3 py-3"
+                                accessibilityRole="button"
+                                accessibilityLabel="Delete group"
+                                accessibilityHint="Permanently deletes this room"
+                            >
+                                <AppText className="text-sm font-semibold" color={colors.error}>
+                                    Delete Group
+                                </AppText>
+                            </Pressable>
+                        ) : null}
+                    </View>
+                </View>
+            ) : null}
+
             {floatingReaction ? (
                 <View pointerEvents="none" style={{ position: 'absolute', right: 28, bottom: 180 }}>
                     <AppText className="text-3xl" color={colors.textPrimary}>
@@ -636,6 +771,7 @@ export default function RoomChatScreen() {
                     />
                 </View>
             </AppModal>
+
         </Screen>
     );
 }

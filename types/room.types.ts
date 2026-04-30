@@ -130,7 +130,6 @@ export type RoomCreateInput = {
     name: string;
     description: string;
     entryFee: number;
-    capacity: number;
     isPublic: boolean;
     allowTips: boolean;
     welcomeMessage?: string;

@@ -15,6 +15,7 @@ interface ScreenProps {
     className?: string;
     title?: string;
     showTopNav?: boolean;
+    topNavRight?: ReactNode;
 }
 
 const Screen = ({
@@ -24,6 +25,7 @@ const Screen = ({
     className,
     title,
     showTopNav = true,
+    topNavRight,
 }: ScreenProps) => {
     const colors = useColors();
     const { theme } = useTheme();
@@ -56,6 +58,7 @@ const Screen = ({
                             title={title || routeTitle}
                             canGoBack={navigation.canGoBack()}
                             onPress={() => router.back()}
+                            rightContent={topNavRight}
                         />
                     </View>
                 ) : null}

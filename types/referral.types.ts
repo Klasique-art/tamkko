@@ -58,6 +58,9 @@ export type AmbassadorStatus = {
     status: 'not_applied' | 'pending' | 'approved' | 'rejected';
     campus?: string | null;
     ambassadorSince?: string | null;
+    applicationId?: string | null;
+    reviewedAt?: string | null;
+    rejectionReason?: string | null;
     badgeLabel?: string | null;
     rewardRatePercent: number;
     reviewMessage?: string | null;
@@ -72,6 +75,13 @@ export type AmbassadorInviteStats = {
 };
 
 export type AmbassadorApplicationPayload = {
-    university: string;
-    reason: string;
+    campus: string;
+    faculty: string;
+    studentId: string;
+    graduationYear: number;
+    socialFollowing: {
+        platform?: string;
+        url: string;
+    }[];
+    whyApply: string;
 };

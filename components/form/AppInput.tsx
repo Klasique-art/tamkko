@@ -46,6 +46,12 @@ const AppInput = ({
     const [isPasswordVisible, setIsPasswordVisible] = useState(false);
     const [isFocused, setIsFocused] = useState(false);
     const inputId = `input-${name}`;
+    const isDarkTheme = colors.background === '#121212';
+    const placeholderColor = isDarkTheme
+        ? '#8A8A8A'
+        : (colors.textSecondary?.startsWith('#') && colors.textSecondary.length === 7
+            ? `${colors.textSecondary}99`
+            : colors.textSecondary);
 
     const togglePasswordVisibility = () => {
         setIsPasswordVisible(!isPasswordVisible);
@@ -96,7 +102,7 @@ const AppInput = ({
                         color: colors.textPrimary,
                     }}
                     placeholder={placeholder}
-                    placeholderTextColor={colors.textSecondary}
+                    placeholderTextColor={placeholderColor}
                     value={value}
                     onChangeText={onChange}
                     onBlur={() => {

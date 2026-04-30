@@ -6,7 +6,7 @@ import { Pressable, ScrollView, View } from 'react-native';
 import AppText from '@/components/ui/AppText';
 import Screen from '@/components/ui/Screen';
 import { useColors } from '@/config/colors';
-import { mockRoomCommunityService } from '@/lib/services/mockRoomCommunityService';
+import { roomService } from '@/lib/services/roomService';
 import { VipRoom } from '@/types/room.types';
 
 const formatTimeAgo = (dateIso?: string) => {
@@ -27,8 +27,12 @@ export default function JoinedRoomsScreen() {
 
     const load = useCallback(async () => {
         setLoading(true);
-        const joinedRooms = await mockRoomCommunityService.listJoinedRooms();
-        setRooms(joinedRooms);
+        try {
+            const response = await roomService.listJoinedRooms({ limit: 50 });
+            setRooms(response.rooms);
+        } catch {
+            setRooms([]);
+        }
         setLoading(false);
     }, []);
 

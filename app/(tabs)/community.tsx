@@ -1,19 +1,21 @@
 import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
 import React, { useCallback, useMemo, useState } from 'react';
-import { Pressable, RefreshControl, ScrollView, View } from 'react-native';
+import { NativeScrollEvent, NativeSyntheticEvent, Pressable, RefreshControl, ScrollView, View } from 'react-native';
 
 import AppText from '@/components/ui/AppText';
 import Screen from '@/components/ui/Screen';
 import { useColors } from '@/config/colors';
-import { useToast } from '@/context/ToastContext';
-import { mockRoomCommunityService } from '@/lib/services/mockRoomCommunityService';
+import { roomService } from '@/lib/services/roomService';
 import { VipRoom } from '@/types/room.types';
 
 const formatEntryFee = (entryFee: number) => (entryFee === 0 ? 'Free entry' : `GHS ${entryFee.toFixed(2)} entry`);
 
 const RoomPreviewCard = ({ room, onPress }: { room: VipRoom; onPress: (roomId: string) => void }) => {
     const colors = useColors();
+    const isCreator = room.role === 'creator';
+    const badgeText = isCreator ? 'Creator' : room.hasJoined ? 'Joined' : 'Not Joined';
+    const badgeColor = isCreator ? colors.info : room.hasJoined ? colors.success : colors.warning;
 
     return (
         <Pressable
@@ -30,10 +32,10 @@ const RoomPreviewCard = ({ room, onPress }: { room: VipRoom; onPress: (roomId: s
                 </AppText>
                 <View
                     className="ml-2 rounded-full px-2 py-1"
-                    style={{ backgroundColor: room.hasJoined ? `${colors.success}20` : `${colors.warning}20` }}
+                    style={{ backgroundColor: `${badgeColor}20` }}
                 >
-                    <AppText className="text-xs font-semibold" color={room.hasJoined ? colors.success : colors.warning}>
-                        {room.hasJoined ? 'Joined' : 'Not Joined'}
+                    <AppText className="text-xs font-semibold" color={badgeColor}>
+                        {badgeText}
                     </AppText>
                 </View>
             </View>
@@ -56,12 +58,12 @@ const RoomPreviewCard = ({ room, onPress }: { room: VipRoom; onPress: (roomId: s
 
 export default function CommunityTab() {
     const colors = useColors();
-    const { showToast } = useToast();
     const [isLoading, setIsLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [publicRooms, setPublicRooms] = useState<VipRoom[]>([]);
-    const [joinedRooms, setJoinedRooms] = useState<VipRoom[]>([]);
     const [creatorRooms, setCreatorRooms] = useState<VipRoom[]>([]);
+    const [creatorCursor, setCreatorCursor] = useState<string | null>(null);
+    const [loadingMoreCreated, setLoadingMoreCreated] = useState(false);
     const [overview, setOverview] = useState({ publicRooms: 0, joinedRooms: 0, onlineNow: 0, activeCreators: 0 });
 
     const load = useCallback(async (isPullRefresh = false) => {
@@ -71,17 +73,32 @@ export default function CommunityTab() {
             setIsLoading(true);
         }
 
-        const [nextPublicRooms, nextJoinedRooms, nextCreatorRooms, nextOverview] = await Promise.all([
-            mockRoomCommunityService.listPublicRooms(),
-            mockRoomCommunityService.listJoinedRooms(),
-            mockRoomCommunityService.listMyCreatorRooms(),
-            mockRoomCommunityService.getCommunityOverview(),
-        ]);
+        try {
+            const [nextPublicRoomsRes, nextJoinedRoomsRes, nextCreatorRoomsRes] = await Promise.all([
+                roomService.listPublicRooms({ limit: 20 }),
+                roomService.listJoinedRooms({ limit: 20 }),
+                roomService.listMyCreatorRooms({ limit: 20, query: '' }),
+            ]);
+            const nextPublicRooms = nextPublicRoomsRes.rooms;
+            const nextJoinedRooms = nextJoinedRoomsRes.rooms;
+            const nextCreatorRooms = nextCreatorRoomsRes.rooms;
+            const nextOverview = {
+                publicRooms: nextPublicRooms.length,
+                joinedRooms: nextJoinedRooms.length,
+                onlineNow: nextPublicRooms.reduce((acc, room) => acc + room.onlineCount, 0),
+                activeCreators: new Set(nextPublicRooms.map((room) => room.creatorId)).size,
+            };
 
-        setPublicRooms(nextPublicRooms);
-        setJoinedRooms(nextJoinedRooms);
-        setCreatorRooms(nextCreatorRooms);
-        setOverview(nextOverview);
+            setPublicRooms(nextPublicRooms);
+            setCreatorRooms(nextCreatorRooms);
+            setCreatorCursor(nextCreatorRoomsRes.nextCursor);
+            setOverview(nextOverview);
+        } catch {
+            setPublicRooms([]);
+            setCreatorRooms([]);
+            setCreatorCursor(null);
+            setOverview({ publicRooms: 0, joinedRooms: 0, onlineNow: 0, activeCreators: 0 });
+        }
         setRefreshing(false);
         setIsLoading(false);
     }, []);
@@ -104,11 +121,43 @@ export default function CommunityTab() {
         router.push(`/rooms/${roomId}`);
     }, []);
 
+    const loadMoreCreatedRooms = useCallback(async () => {
+        if (!creatorCursor || loadingMoreCreated) return;
+        try {
+            setLoadingMoreCreated(true);
+            const response = await roomService.listMyCreatorRooms({ limit: 20, cursor: creatorCursor, query: '' });
+            setCreatorRooms((current) => {
+                const existing = new Set(current.map((room) => room.id));
+                const merged = [...current];
+                for (const room of response.rooms) {
+                    if (!existing.has(room.id)) merged.push(room);
+                }
+                return merged;
+            });
+            setCreatorCursor(response.nextCursor);
+        } finally {
+            setLoadingMoreCreated(false);
+        }
+    }, [creatorCursor, loadingMoreCreated]);
+
+    const handleScroll = useCallback(
+        (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+            const { layoutMeasurement, contentOffset, contentSize } = event.nativeEvent;
+            const distanceFromBottom = contentSize.height - (layoutMeasurement.height + contentOffset.y);
+            if (distanceFromBottom < 180) {
+                void loadMoreCreatedRooms();
+            }
+        },
+        [loadMoreCreatedRooms]
+    );
+
     return (
         <Screen className="pt-3" title="Community">
             <ScrollView
                 showsVerticalScrollIndicator={false}
                 contentContainerStyle={{ paddingBottom: 120 }}
+                onScroll={handleScroll}
+                scrollEventThrottle={16}
                 refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void load(true)} tintColor={colors.accent} />}
             >
                 <View
@@ -170,29 +219,6 @@ export default function CommunityTab() {
                 <View className="mt-5">
                     <View className="mb-2 flex-row items-center justify-between">
                         <AppText className="text-base font-bold" color={colors.textPrimary}>
-                            Continue Where You Left Off
-                        </AppText>
-                        <Pressable onPress={() => router.push('/rooms/joined')} accessibilityRole="button" accessibilityLabel="Open joined rooms">
-                            <AppText className="text-xs font-semibold" color={colors.accent}>
-                                See all
-                            </AppText>
-                        </Pressable>
-                    </View>
-
-                    {joinedRooms.length === 0 ? (
-                        <View className="rounded-xl border px-4 py-4" style={{ borderColor: colors.border, backgroundColor: colors.backgroundAlt }}>
-                            <AppText className="text-sm" color={colors.textSecondary}>
-                                You have not joined any rooms yet.
-                            </AppText>
-                        </View>
-                    ) : (
-                        joinedRooms.slice(0, 2).map((room) => <RoomPreviewCard key={room.id} room={room} onPress={handleOpenRoom} />)
-                    )}
-                </View>
-
-                <View className="mt-2">
-                    <View className="mb-2 flex-row items-center justify-between">
-                        <AppText className="text-base font-bold" color={colors.textPrimary}>
                             Discover Public Rooms
                         </AppText>
                         <Pressable onPress={() => router.push('/rooms')} accessibilityRole="button" accessibilityLabel="Browse all rooms">
@@ -208,14 +234,14 @@ export default function CommunityTab() {
                             </AppText>
                         </View>
                     ) : (
-                        publicRooms.slice(0, 4).map((room) => <RoomPreviewCard key={room.id} room={room} onPress={handleOpenRoom} />)
+                        publicRooms.slice(0, 5).map((room) => <RoomPreviewCard key={room.id} room={room} onPress={handleOpenRoom} />)
                     )}
                 </View>
 
                 <View className="mt-2">
                     <View className="mb-2 flex-row items-center justify-between">
                         <AppText className="text-base font-bold" color={colors.textPrimary}>
-                            Your Creator Rooms
+                            Your Created Rooms
                         </AppText>
                         <Pressable onPress={() => router.push('/rooms/create')} accessibilityRole="button" accessibilityLabel="Create room">
                             <AppText className="text-xs font-semibold" color={colors.accent}>
@@ -232,6 +258,13 @@ export default function CommunityTab() {
                     ) : (
                         creatorRooms.map((room) => <RoomPreviewCard key={room.id} room={room} onPress={handleOpenRoom} />)
                     )}
+                    {loadingMoreCreated ? (
+                        <View className="rounded-xl border px-4 py-4" style={{ borderColor: colors.border, backgroundColor: colors.backgroundAlt }}>
+                            <AppText className="text-sm" color={colors.textSecondary}>
+                                Loading more created rooms...
+                            </AppText>
+                        </View>
+                    ) : null}
                 </View>
 
                 {isLoading ? (
@@ -242,20 +275,6 @@ export default function CommunityTab() {
                     </View>
                 ) : null}
 
-                <Pressable
-                    onPress={() => {
-                        showToast('Community refreshed', { variant: 'success', duration: 1800 });
-                        void load(true);
-                    }}
-                    className="mt-2 rounded-xl border py-3"
-                    style={{ borderColor: colors.border, backgroundColor: colors.backgroundAlt }}
-                    accessibilityRole="button"
-                    accessibilityLabel="Refresh community data"
-                >
-                    <AppText className="text-center text-sm font-semibold" color={colors.textPrimary}>
-                        Refresh Community Data
-                    </AppText>
-                </Pressable>
             </ScrollView>
         </Screen>
     );

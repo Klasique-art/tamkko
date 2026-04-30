@@ -6,7 +6,7 @@ import { Pressable, ScrollView, TextInput, View } from 'react-native';
 import AppText from '@/components/ui/AppText';
 import Screen from '@/components/ui/Screen';
 import { useColors } from '@/config/colors';
-import { mockRoomCommunityService } from '@/lib/services/mockRoomCommunityService';
+import { roomService } from '@/lib/services/roomService';
 import { VipRoom } from '@/types/room.types';
 
 type RoomFilter = 'all' | 'free' | 'paid' | 'joined';
@@ -22,10 +22,14 @@ export default function RoomsHomeScreen() {
 
     const load = useCallback(async () => {
         setLoading(true);
-        const publicRooms = await mockRoomCommunityService.listPublicRooms();
-        setRooms(publicRooms);
+        try {
+            const response = await roomService.listPublicRooms({ query: search.trim(), limit: 50 });
+            setRooms(response.rooms);
+        } catch {
+            setRooms([]);
+        }
         setLoading(false);
-    }, []);
+    }, [search]);
 
     React.useEffect(() => {
         void load();

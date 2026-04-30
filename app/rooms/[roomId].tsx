@@ -5,13 +5,12 @@ import React, { useCallback, useMemo, useState } from 'react';
 import { Pressable, ScrollView, Share, TextInput, View } from 'react-native';
 
 import AppButton from '@/components/ui/AppButton';
-import AppModal from '@/components/ui/AppModal';
 import AppText from '@/components/ui/AppText';
 import Screen from '@/components/ui/Screen';
 import { useColors } from '@/config/colors';
 import { useToast } from '@/context/ToastContext';
-import { mockRoomCommunityService } from '@/lib/services/mockRoomCommunityService';
-import { RoomCodeApplyResult, RoomEntryRequest, VipRoom } from '@/types/room.types';
+import { roomService } from '@/lib/services/roomService';
+import { VipRoom } from '@/types/room.types';
 
 const formatEntryFee = (fee: number) => (fee === 0 ? 'Free Entry' : `GHS ${fee.toFixed(2)} one-time entry`);
 
@@ -22,18 +21,26 @@ export default function RoomDetailScreen() {
 
     const [room, setRoom] = useState<VipRoom | null>(null);
     const [loading, setLoading] = useState(true);
-    const [momoNumber, setMomoNumber] = useState('+23324');
     const [codeInput, setCodeInput] = useState('');
-    const [codeResult, setCodeResult] = useState<RoomCodeApplyResult | null>(null);
-    const [entryRequest, setEntryRequest] = useState<RoomEntryRequest | null>(null);
+    const [preview, setPreview] = useState<{
+        codeString: string;
+        originalAmount: number;
+        discountAmount: number;
+        payableAmount: number;
+        message: string;
+    } | null>(null);
     const [isJoining, setIsJoining] = useState(false);
-    const [showPaymentModal, setShowPaymentModal] = useState(false);
+    const [previewing, setPreviewing] = useState(false);
 
     const loadRoom = useCallback(async () => {
         if (!roomId) return;
         setLoading(true);
-        const nextRoom = await mockRoomCommunityService.getRoomById(roomId);
-        setRoom(nextRoom);
+        try {
+            const nextRoom = await roomService.getRoom(roomId);
+            setRoom(nextRoom);
+        } catch {
+            setRoom(null);
+        }
         setLoading(false);
     }, [roomId]);
 
@@ -41,11 +48,6 @@ export default function RoomDetailScreen() {
         void loadRoom();
     }, [loadRoom]);
 
-    const effectiveEntryFee = useMemo(() => {
-        if (!room) return 0;
-        if (!codeResult) return room.entryFee;
-        return codeResult.discountedFeeGhs;
-    }, [codeResult, room]);
     const canAccessRoom = useMemo(() => {
         if (!room) return false;
         if (room.role === 'creator') return true;
@@ -53,66 +55,47 @@ export default function RoomDetailScreen() {
         return room.hasJoined && room.hasPaid;
     }, [room]);
 
-    const handleApplyCode = async () => {
-        if (!room || !codeInput.trim()) return;
-        const result = await mockRoomCommunityService.applyCreatorCode(room.id, codeInput.trim());
-        if (!result) {
-            void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-            showToast('Code is invalid, expired, or exhausted.', { variant: 'warning', duration: 2600 });
-            setCodeResult(null);
-            return;
-        }
-
-        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        setCodeResult(result);
-        showToast(result.message, { variant: 'success', duration: 2600 });
-    };
-
     const handleJoinRoom = async () => {
         if (!room || isJoining) return;
 
-        setIsJoining(true);
-        const entry = await mockRoomCommunityService.requestRoomEntry(room.id, {
-            momoNumber,
-            codeString: codeInput.trim() || undefined,
-        });
-        setIsJoining(false);
-
-        if (!entry || entry.status === 'failed') {
-            void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-            showToast('Unable to initiate room entry. Check input and try again.', { variant: 'error', duration: 2800 });
-            return;
-        }
-
-        setEntryRequest(entry);
-
-        if (entry.status === 'granted') {
+        try {
+            setIsJoining(true);
+            const result = await roomService.joinRoom(room.id, codeInput.trim() ? { code_string: codeInput.trim() } : undefined);
+            if (!result?.joined) {
+                if (result?.paymentRequired) {
+                    showToast(
+                        `Payment required. Payable: GHS ${result.payableAmount.toFixed(2)}${result.discountAmount > 0 ? ` (saved GHS ${result.discountAmount.toFixed(2)})` : ''}.`,
+                        { variant: 'info', duration: 3400 }
+                    );
+                    return;
+                }
+                void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+                showToast(result?.message || 'Unable to join this room right now.', { variant: 'warning', duration: 2800 });
+                return;
+            }
             void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-            showToast('Room access granted. You can enter chat now.', { variant: 'success', duration: 2600 });
+            showToast(result?.message || 'Room joined successfully.', { variant: 'success', duration: 2600 });
             await loadRoom();
-            return;
+        } catch {
+            void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+            showToast('Unable to join room right now.', { variant: 'error', duration: 2800 });
+        } finally {
+            setIsJoining(false);
         }
-
-        setShowPaymentModal(true);
-        showToast('Payment initiated. Approve fake MoMo prompt.', { variant: 'info', duration: 2400 });
     };
 
-    const handlePollPayment = async () => {
-        if (!room || !entryRequest || entryRequest.status !== 'pending') return;
-
-        const next = await mockRoomCommunityService.pollEntryStatus(room.id, entryRequest.entryId);
-        if (!next) {
-            showToast('Payment status unavailable right now.', { variant: 'warning', duration: 2200 });
-            return;
-        }
-
-        setEntryRequest(next);
-
-        if (next.status === 'granted') {
-            void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-            setShowPaymentModal(false);
-            showToast('Payment confirmed. Room unlocked.', { variant: 'success', duration: 3000 });
-            await loadRoom();
+    const handlePreviewCode = async () => {
+        if (!room || !codeInput.trim() || previewing) return;
+        try {
+            setPreviewing(true);
+            const result = await roomService.previewPromoCode(room.id, codeInput.trim());
+            setPreview(result);
+            showToast(result.message, { variant: 'success', duration: 2200 });
+        } catch {
+            setPreview(null);
+            showToast('Promo code is invalid, expired, or exhausted.', { variant: 'warning', duration: 2600 });
+        } finally {
+            setPreviewing(false);
         }
     };
 
@@ -207,7 +190,7 @@ export default function RoomDetailScreen() {
                             void Haptics.selectionAsync();
                             void handleShareRoom();
                         }}
-                        className="mr-2 flex-1 rounded-xl border py-3"
+                        className="flex-1 rounded-xl border py-3"
                         style={{ borderColor: colors.border, backgroundColor: colors.backgroundAlt }}
                         accessibilityRole="button"
                         accessibilityLabel="Share this room"
@@ -218,18 +201,6 @@ export default function RoomDetailScreen() {
                                 Share Room
                             </AppText>
                         </View>
-                    </Pressable>
-
-                    <Pressable
-                        onPress={() => router.push('/rooms/joined')}
-                        className="flex-1 rounded-xl border py-3"
-                        style={{ borderColor: colors.border, backgroundColor: colors.backgroundAlt }}
-                        accessibilityRole="button"
-                        accessibilityLabel="View joined rooms"
-                    >
-                        <AppText className="text-center text-sm font-semibold" color={colors.textPrimary}>
-                            Joined Rooms
-                        </AppText>
                     </Pressable>
                 </View>
 
@@ -276,63 +247,52 @@ export default function RoomDetailScreen() {
                             Join This Room
                         </AppText>
                         <AppText className="mt-1 text-sm" color={colors.textSecondary}>
-                            Paid rooms require one-time MoMo payment. Free rooms grant instant access.
+                            For paid rooms, backend handles payment and access. Add a promo code if you have one.
                         </AppText>
 
                         <View className="mt-3 rounded-xl border px-3" style={{ borderColor: colors.border, backgroundColor: colors.background }}>
                             <TextInput
                                 value={codeInput}
-                                onChangeText={setCodeInput}
-                                placeholder="Creator code (optional)"
+                                onChangeText={(value) => {
+                                    setCodeInput(value);
+                                    setPreview(null);
+                                }}
+                                placeholder="Promo code (optional)"
                                 placeholderTextColor={colors.textSecondary}
                                 autoCapitalize="characters"
                                 style={{ color: colors.textPrimary, paddingVertical: 12 }}
-                                accessibilityLabel="Creator code"
+                                accessibilityLabel="Promo code"
                             />
                         </View>
 
                         <Pressable
                             onPress={() => {
                                 void Haptics.selectionAsync();
-                                void handleApplyCode();
+                                void handlePreviewCode();
                             }}
                             className="mt-2 rounded-xl border py-3"
                             style={{ borderColor: colors.border, backgroundColor: colors.background }}
                             accessibilityRole="button"
-                            accessibilityLabel="Apply creator code"
+                            accessibilityLabel="Preview promo code"
                         >
                             <AppText className="text-center text-sm font-semibold" color={colors.textPrimary}>
-                                Apply Code
+                                {previewing ? 'Checking...' : 'Apply Promo Code'}
                             </AppText>
                         </Pressable>
 
-                        {codeResult ? (
+                        {preview ? (
                             <View className="mt-3 rounded-xl border px-3 py-3" style={{ borderColor: `${colors.success}55`, backgroundColor: `${colors.success}14` }}>
                                 <AppText className="text-xs font-semibold" color={colors.success}>
-                                    Code {codeResult.codeString} applied
+                                    Code {preview.codeString} applied
                                 </AppText>
                                 <AppText className="mt-1 text-sm" color={colors.textSecondary}>
-                                    New fee: GHS {codeResult.discountedFeeGhs.toFixed(2)} (saved GHS {codeResult.savingsGhs.toFixed(2)})
+                                    Original: GHS {preview.originalAmount.toFixed(2)} • Discount: GHS {preview.discountAmount.toFixed(2)} • Payable: GHS {preview.payableAmount.toFixed(2)}
                                 </AppText>
-                            </View>
-                        ) : null}
-
-                        {effectiveEntryFee > 0 ? (
-                            <View className="mt-3 rounded-xl border px-3" style={{ borderColor: colors.border, backgroundColor: colors.background }}>
-                                <TextInput
-                                    value={momoNumber}
-                                    onChangeText={setMomoNumber}
-                                    placeholder="MTN MoMo number"
-                                    placeholderTextColor={colors.textSecondary}
-                                    keyboardType="phone-pad"
-                                    style={{ color: colors.textPrimary, paddingVertical: 12 }}
-                                    accessibilityLabel="Mobile money number"
-                                />
                             </View>
                         ) : null}
 
                         <AppButton
-                            title={`Join Room • GHS ${effectiveEntryFee.toFixed(2)}`}
+                            title={`Join Room${room.entryFee > 0 ? ` • GHS ${(preview?.payableAmount ?? room.entryFee).toFixed(2)}` : ''}`}
                             loading={isJoining}
                             onClick={() => {
                                 void handleJoinRoom();
@@ -342,38 +302,6 @@ export default function RoomDetailScreen() {
                     </View>
                 )}
             </ScrollView>
-
-            <AppModal visible={showPaymentModal} onClose={() => setShowPaymentModal(false)} title="Payment Pending">
-                <AppText className="text-sm" color={colors.textSecondary}>
-                    Entry payment is pending. In this simulation, tap the button below to poll payment status.
-                </AppText>
-
-                <View className="mt-3 rounded-xl border px-3 py-3" style={{ borderColor: colors.border, backgroundColor: colors.backgroundAlt }}>
-                    <AppText className="text-xs" color={colors.textSecondary}>
-                        Entry ID
-                    </AppText>
-                    <AppText className="text-sm font-semibold" color={colors.textPrimary}>
-                        {entryRequest?.entryId || 'N/A'}
-                    </AppText>
-                    <AppText className="mt-1 text-xs" color={colors.textSecondary}>
-                        Status: {entryRequest?.status || 'unknown'}
-                    </AppText>
-                </View>
-
-                <AppButton title="Check Payment Status" onClick={() => void handlePollPayment()} style={{ marginTop: 12 }} />
-
-                <Pressable
-                    onPress={() => setShowPaymentModal(false)}
-                    className="mt-2 rounded-xl border py-3"
-                    style={{ borderColor: colors.border, backgroundColor: colors.backgroundAlt }}
-                    accessibilityRole="button"
-                    accessibilityLabel="Close payment dialog"
-                >
-                    <AppText className="text-center text-sm font-semibold" color={colors.textPrimary}>
-                        Close
-                    </AppText>
-                </Pressable>
-            </AppModal>
         </Screen>
     );
 }

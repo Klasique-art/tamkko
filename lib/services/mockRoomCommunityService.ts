@@ -220,6 +220,7 @@ export const mockRoomCommunityService = {
     async createRoom(input: RoomCreateInput) {
         await delay(280);
         const roomId = `room_${Math.random().toString(36).slice(2, 8)}`;
+        const backendManagedCapacity = 500;
         const room: VipRoom = {
             id: roomId,
             name: input.name.trim(),
@@ -232,7 +233,7 @@ export const mockRoomCommunityService = {
             hasJoined: true,
             hasPaid: true,
             status: 'active',
-            capacity: input.capacity,
+            capacity: backendManagedCapacity,
             creatorId: CURRENT_USER.id,
             creatorUsername: CURRENT_USER.username,
             creatorDisplayName: CURRENT_USER.displayName,
@@ -704,6 +705,45 @@ export const mockRoomCommunityService = {
         );
         const code = listCodes(roomId).find((item) => item.id === codeId);
         return code ? cloneCode(code) : null;
+    },
+
+    async updateCreatorCode(
+        roomId: string,
+        codeId: string,
+        payload: {
+            label?: string;
+            campus?: string | null;
+            discountType?: RoomCreatorCode['discountType'];
+            discountAmount?: number;
+            maxUses?: number | null;
+            expiresAt?: string | null;
+            isActive?: boolean;
+        }
+    ) {
+        await delay(120);
+        codesStore[roomId] = listCodes(roomId).map((code) =>
+            code.id === codeId
+                ? {
+                    ...code,
+                    label: payload.label ?? code.label,
+                    campus: payload.campus ?? code.campus,
+                    discountType: payload.discountType ?? code.discountType,
+                    discountAmount: typeof payload.discountAmount === 'number' ? payload.discountAmount : code.discountAmount,
+                    maxUses: typeof payload.maxUses === 'number' || payload.maxUses === null ? payload.maxUses : code.maxUses,
+                    expiresAt: payload.expiresAt ?? code.expiresAt,
+                    isActive: typeof payload.isActive === 'boolean' ? payload.isActive : code.isActive,
+                }
+                : code
+        );
+        const code = listCodes(roomId).find((item) => item.id === codeId);
+        return code ? cloneCode(code) : null;
+    },
+
+    async deleteCreatorCode(roomId: string, codeId: string) {
+        await delay(100);
+        const before = listCodes(roomId).length;
+        codesStore[roomId] = listCodes(roomId).filter((code) => code.id !== codeId);
+        return before !== listCodes(roomId).length;
     },
 
     async listCreatorCodes(roomId: string) {

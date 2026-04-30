@@ -1,4 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
+import { ReactNode } from 'react';
 import { Pressable, View } from 'react-native';
 
 import { useColors } from '@/config/colors';
@@ -8,9 +9,10 @@ interface NavProps {
     title?: string;
     onPress?: () => void;
     canGoBack?: boolean;
+    rightContent?: ReactNode;
 }
 
-const Nav = ({ title = '', onPress, canGoBack = true }: NavProps) => {
+const Nav = ({ title = '', onPress, canGoBack = true, rightContent }: NavProps) => {
     const colors = useColors();
 
     return (
@@ -43,7 +45,7 @@ const Nav = ({ title = '', onPress, canGoBack = true }: NavProps) => {
                 {title}
             </AppText>
 
-            <View className="h-10 w-10" />
+            <View className="h-10 w-10 items-center justify-center">{rightContent ?? null}</View>
         </View>
     );
 };
