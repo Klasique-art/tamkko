@@ -1,5 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
+import { Image } from 'expo-image';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import React, { memo } from 'react';
 import { AccessibilityInfo, Animated, Pressable, View } from 'react-native';
@@ -23,6 +24,9 @@ type VideoFeedSlideProps = {
     onFollowCreator?: (creatorHandle: string) => void;
     onToggleLike?: () => void;
     showMoreButton?: boolean;
+    showCreatorInfo?: boolean;
+    showFollowButton?: boolean;
+    showTipButton?: boolean;
 };
 
 function ActiveVideoSurface({
@@ -91,6 +95,9 @@ function VideoFeedSlide({
     onFollowCreator,
     onToggleLike,
     showMoreButton = false,
+    showCreatorInfo = true,
+    showFollowButton = true,
+    showTipButton = true,
 }: VideoFeedSlideProps) {
     const lastTapRef = React.useRef(0);
     const singleTapTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -100,7 +107,8 @@ function VideoFeedSlide({
     const playbackOpacity = React.useRef(new Animated.Value(0)).current;
     const [playbackIcon, setPlaybackIcon] = React.useState<'play' | 'pause'>('pause');
     const [isPlaying, setIsPlaying] = React.useState(true);
-    const shouldMountVideo = isActive;
+    const isImagePost = item.mediaType === 'image' || (!item.videoSource && !item.playbackUrl);
+    const shouldMountVideo = isActive && !isImagePost;
     React.useEffect(() => {
         if (!isActive) setIsPlaying(false);
     }, [isActive]);
@@ -167,12 +175,13 @@ function VideoFeedSlide({
     );
 
     const togglePlayback = React.useCallback(() => {
+        if (isImagePost) return;
         if (!isActive) return;
         const nextIsPlaying = !isPlaying;
         AccessibilityInfo.announceForAccessibility(nextIsPlaying ? 'Video playing' : 'Video paused');
         playPlaybackFeedback(nextIsPlaying ? 'play' : 'pause');
         setIsPlaying(nextIsPlaying);
-    }, [isActive, isPlaying, playPlaybackFeedback]);
+    }, [isActive, isImagePost, isPlaying, playPlaybackFeedback]);
 
     React.useEffect(() => {
         if (isActive) setIsPlaying(true);
@@ -208,11 +217,30 @@ function VideoFeedSlide({
         <Pressable
             onPress={handlePress}
             accessibilityRole="button"
-            accessibilityLabel={`Video by ${item.creatorUsername}`}
-            accessibilityHint="Single tap to play or pause. Double tap quickly to like."
+            accessibilityLabel={`${isImagePost ? 'Image' : 'Video'} by ${item.creatorUsername}`}
+            accessibilityHint={isImagePost ? 'Double tap quickly to like.' : 'Single tap to play or pause. Double tap quickly to like.'}
         >
             <View style={{ height, backgroundColor: index % 2 === 0 ? '#0a0a0a' : '#111111' }}>
-                {shouldMountVideo ? (
+                {isImagePost ? (
+                    item.thumbnailUrl ? (
+                        <Image
+                            source={{ uri: item.thumbnailUrl }}
+                            style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}
+                            contentFit="cover"
+                        />
+                    ) : (
+                        <View
+                            style={{
+                                position: 'absolute',
+                                top: 0,
+                                right: 0,
+                                bottom: 0,
+                                left: 0,
+                                backgroundColor: '#0B0B0B',
+                            }}
+                        />
+                    )
+                ) : shouldMountVideo ? (
                     <ActiveVideoSurface
                         source={item.videoSource ?? MOCK_TEST_VIDEO_SOURCE}
                         isPlaying={isPlaying}
@@ -249,16 +277,18 @@ function VideoFeedSlide({
                             transform: [{ scale: playbackScale }],
                         }}
                     >
-                        <View
-                            className="items-center justify-center rounded-full"
-                            style={{ width: 72, height: 72, backgroundColor: 'rgba(0,0,0,0.5)' }}
-                        >
-                            <Ionicons
-                                name={playbackIcon === 'play' ? 'play' : 'pause'}
-                                size={34}
-                                color="#FFFFFF"
-                            />
-                        </View>
+                        {!isImagePost ? (
+                            <View
+                                className="items-center justify-center rounded-full"
+                                style={{ width: 72, height: 72, backgroundColor: 'rgba(0,0,0,0.5)' }}
+                            >
+                                <Ionicons
+                                    name={playbackIcon === 'play' ? 'play' : 'pause'}
+                                    size={34}
+                                    color="#FFFFFF"
+                                />
+                            </View>
+                        ) : null}
                     </Animated.View>
                 </View>
 
@@ -279,6 +309,9 @@ function VideoFeedSlide({
                     creatorHandle={item.creatorUsername}
                     caption={item.caption}
                     isFollowing={isFollowingCreator}
+                    showCreatorInfo={showCreatorInfo}
+                    showFollowButton={showFollowButton}
+                    showTipButton={showTipButton}
                     onCreatorPress={() => onCreatorPress?.(item.creatorUsername)}
                     onFollowPress={() => onFollowCreator?.(item.creatorUsername)}
                     onTipPress={() => onTipPress?.(item)}
@@ -299,5 +332,8 @@ export default memo(VideoFeedSlide, (prev, next) =>
     prev.item.commentsCount === next.item.commentsCount &&
     prev.item.caption === next.item.caption &&
     prev.item.creatorUsername === next.item.creatorUsername &&
-    prev.item.videoSource === next.item.videoSource
+    prev.item.videoSource === next.item.videoSource &&
+    prev.showCreatorInfo === next.showCreatorInfo &&
+    prev.showFollowButton === next.showFollowButton &&
+    prev.showTipButton === next.showTipButton
 );

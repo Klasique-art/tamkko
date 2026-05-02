@@ -92,14 +92,14 @@ export default function CreateMediaPreview({
                 </View>
             ) : (
                 <View
-                    className="items-center justify-center rounded-2xl border border-dashed px-4 py-10"
+                    className="items-center justify-center rounded-2xl border border-dashed px-4 py-6"
                     style={{ borderColor: colors.border, backgroundColor: colors.background }}
                 >
-                    <Ionicons name="images-outline" size={32} color={colors.textSecondary} />
-                    <AppText className="mt-3 text-base font-semibold" color={colors.textPrimary}>
+                    <Ionicons name="images-outline" size={24} color={colors.textSecondary} />
+                    <AppText className="mt-2 text-sm font-semibold" color={colors.textPrimary}>
                         Start A New Post
                     </AppText>
-                    <AppText className="mt-1 text-center text-sm" color={colors.textSecondary}>
+                    <AppText className="mt-1 text-center text-xs" color={colors.textSecondary}>
                         Select one image or video from your gallery, or record up to 60 seconds.
                     </AppText>
                 </View>

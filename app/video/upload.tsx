@@ -45,12 +45,12 @@ export default function UploadScreen() {
 
         const result = fromCamera
             ? await ImagePicker.launchCameraAsync({
-                mediaTypes: ImagePicker.MediaTypeOptions.All,
+                mediaTypes: ['images', 'videos'],
                 quality: 0.85,
                 videoMaxDuration: CREATE_MAX_RECORDING_SECONDS,
             })
             : await ImagePicker.launchImageLibraryAsync({
-                mediaTypes: ImagePicker.MediaTypeOptions.All,
+                mediaTypes: ['images', 'videos'],
                 quality: 0.85,
                 videoMaxDuration: CREATE_MAX_RECORDING_SECONDS,
             });

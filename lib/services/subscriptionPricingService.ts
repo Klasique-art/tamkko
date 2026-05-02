@@ -64,11 +64,9 @@ export const subscriptionPricingService = {
         for (const endpoint of getAttempts) {
             const result = await tryGet(endpoint);
             if (!result.ok) continue;
-            console.log(`[subscriptionPricingService] getPrice response (${endpoint}) :: ${JSON.stringify(result.data)}`);
             const price = extractPrice(result.data);
             if (price !== null) {
                 const normalized = clampPrice(price);
-                console.log(`[subscriptionPricingService] resolved price :: ${normalized}`);
                 return normalized;
             }
         }

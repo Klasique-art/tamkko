@@ -26,6 +26,8 @@ type VideoSnapFeedProps = {
     initialVideoId?: string;
     showMoreButton?: boolean;
     onMorePress?: (video: VideoItem) => void;
+    useActiveVideoTitleAsNavTitle?: boolean;
+    hideCreatorMetaControls?: boolean;
 };
 
 export default function VideoSnapFeed({
@@ -39,6 +41,8 @@ export default function VideoSnapFeed({
     initialVideoId,
     showMoreButton = false,
     onMorePress,
+    useActiveVideoTitleAsNavTitle = false,
+    hideCreatorMetaControls = false,
 }: VideoSnapFeedProps) {
     const [pageHeight, setPageHeight] = React.useState(0);
     const [feedData, setFeedData] = React.useState<VideoItem[]>(videos);
@@ -57,6 +61,13 @@ export default function VideoSnapFeed({
     const hasAppliedInitialScroll = React.useRef(false);
     const [activeIndex, setActiveIndex] = React.useState(0);
     const [followedCreators, setFollowedCreators] = React.useState<Set<string>>(getFollowedCreators());
+    const truncate = React.useCallback((value: string, max = 26) => (value.length > max ? `${value.slice(0, max - 1)}…` : value), []);
+    const computedNavTitle = React.useMemo(() => {
+        if (!useActiveVideoTitleAsNavTitle) return navTitle;
+        const title = feedData[activeIndex]?.title?.trim();
+        if (!title) return navTitle;
+        return truncate(title);
+    }, [activeIndex, feedData, navTitle, truncate, useActiveVideoTitleAsNavTitle]);
 
     React.useEffect(() => {
         setFeedData(videos);
@@ -159,6 +170,9 @@ export default function VideoSnapFeed({
                 onFollowCreator={toggleFollowCreator}
                 onToggleLike={() => toggleLike(item.id)}
                 showMoreButton={showMoreButton}
+                showCreatorInfo={!hideCreatorMetaControls}
+                showFollowButton={!hideCreatorMetaControls}
+                showTipButton={!hideCreatorMetaControls}
             />
         ),
         [
@@ -174,6 +188,7 @@ export default function VideoSnapFeed({
             openTipSheet,
             pageHeight,
             showMoreButton,
+            hideCreatorMetaControls,
             toggleFollowCreator,
             toggleLike,
         ]
@@ -216,7 +231,7 @@ export default function VideoSnapFeed({
         >
             {showTopNav ? (
                 <View style={{ position: 'absolute', top: insets.top, left: 12, right: 12, zIndex: 20 }}>
-                    <Nav title={navTitle} canGoBack={navigation.canGoBack()} onPress={() => router.back()} />
+                    <Nav title={computedNavTitle} canGoBack={navigation.canGoBack()} onPress={() => router.back()} />
                 </View>
             ) : null}
 

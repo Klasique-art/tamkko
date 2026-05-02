@@ -25,6 +25,10 @@ type VideoUploadStatusResponse = {
     duration: number;
     status: 'processing' | 'ready' | 'failed' | string;
     ready_to_stream: boolean;
+    video_codec?: string | null;
+    video_profile?: string | null;
+    error_code?: string | null;
+    error_message?: string | null;
 };
 
 type ImageUploadConfigResponse = {
@@ -74,6 +78,17 @@ type PublishPostResponse = {
 };
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+export class UploadStatusError extends Error {
+    code?: string;
+    statusPayload?: VideoUploadStatusResponse;
+    constructor(message: string, options?: { code?: string; statusPayload?: VideoUploadStatusResponse }) {
+        super(message);
+        this.name = 'UploadStatusError';
+        this.code = options?.code;
+        this.statusPayload = options?.statusPayload;
+    }
+}
 
 const unwrapData = <T>(payload: ApiEnvelope<T> | T): T => {
     if (payload && typeof payload === 'object' && 'data' in (payload as ApiEnvelope<T>)) {
@@ -169,11 +184,16 @@ export const postPublishingService = {
         for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
             const status = await this.getVideoUploadStatus(postId);
             if (status.ready_to_stream || status.status === 'ready') return status;
-            if (status.status === 'failed') throw new Error('Video processing failed.');
+            if (status.status === 'failed') {
+                throw new UploadStatusError(
+                    status.error_message || 'Video processing failed.',
+                    { code: status.error_code ?? undefined, statusPayload: status }
+                );
+            }
             await sleep(intervalMs);
         }
 
-        throw new Error('Video is still processing. Please try again shortly.');
+        throw new UploadStatusError('Video is still processing. Please try again shortly.');
     },
 
     async getImageUploadConfig() {

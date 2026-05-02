@@ -55,6 +55,8 @@ const VideoManageActionSheet = forwardRef<AppBottomSheetRef, VideoManageActionSh
         const colors = useColors();
         const sheetRef = useRef<AppBottomSheetRef>(null);
         const [confirmDelete, setConfirmDelete] = React.useState(false);
+        const isImagePost = video?.mediaType === 'image' || (!video?.videoSource && !video?.playbackUrl);
+        const mediaNoun = isImagePost ? 'image' : 'video';
 
         useImperativeHandle(ref, () => ({
             open: () => sheetRef.current?.open(),
@@ -89,7 +91,7 @@ const VideoManageActionSheet = forwardRef<AppBottomSheetRef, VideoManageActionSh
             <AppBottomSheet ref={sheetRef} snapPoints={['46%']} onClose={() => setConfirmDelete(false)}>
                 <View className="px-4 pb-4 pt-2">
                     <AppText className="text-lg font-black" color={colors.textPrimary}>
-                        Manage Video
+                        {isImagePost ? 'Manage Image' : 'Manage Video'}
                     </AppText>
                     <AppText className="mt-1 text-xs" color={colors.textSecondary} numberOfLines={2}>
                         {video?.title ?? 'Post options'}
@@ -98,7 +100,7 @@ const VideoManageActionSheet = forwardRef<AppBottomSheetRef, VideoManageActionSh
                     {!confirmDelete ? (
                         <>
                             <ActionRow icon="create-outline" label="Edit caption & settings" onPress={handleEdit} />
-                            <ActionRow icon="trash-outline" label="Delete video" danger onPress={requestDelete} />
+                            <ActionRow icon="trash-outline" label={`Delete ${mediaNoun}`} danger onPress={requestDelete} />
                             <Pressable
                                 onPress={close}
                                 className="mt-3 rounded-2xl border py-3"
@@ -114,7 +116,7 @@ const VideoManageActionSheet = forwardRef<AppBottomSheetRef, VideoManageActionSh
                     ) : (
                         <View className="mt-3 rounded-2xl border p-4" style={{ borderColor: `${colors.error}44`, backgroundColor: `${colors.error}12` }}>
                             <AppText className="text-sm font-bold" color={colors.error}>
-                                Delete this video permanently?
+                                {`Delete this ${mediaNoun} permanently?`}
                             </AppText>
                             <AppText className="mt-1 text-xs" color={colors.textSecondary}>
                                 This action cannot be undone.
@@ -134,7 +136,7 @@ const VideoManageActionSheet = forwardRef<AppBottomSheetRef, VideoManageActionSh
                                     className="flex-1 rounded-xl border py-3"
                                     style={{ borderColor: `${colors.error}55`, backgroundColor: `${colors.error}20` }}
                                     accessibilityRole="button"
-                                    accessibilityLabel="Confirm delete video"
+                                    accessibilityLabel={`Confirm delete ${mediaNoun}`}
                                 >
                                     <AppText className="text-center text-sm font-semibold" color={colors.error}>Delete</AppText>
                                 </Pressable>

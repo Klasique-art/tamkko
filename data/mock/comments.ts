@@ -11,6 +11,17 @@ const mockHandles = [
     '@yawstudios',
 ];
 
+const mockAvatarUrls = [
+    'https://i.pravatar.cc/120?img=11',
+    'https://i.pravatar.cc/120?img=12',
+    'https://i.pravatar.cc/120?img=14',
+    'https://i.pravatar.cc/120?img=15',
+    null,
+    'https://i.pravatar.cc/120?img=18',
+    null,
+    'https://i.pravatar.cc/120?img=21',
+];
+
 const baseComments = [
     'This is clean content.',
     'I replayed this three times already.',
@@ -36,10 +47,12 @@ export const generateCommentsForVideo = (videoId: string, total = 16): VideoComm
 
     for (let i = 0; i < total; i += 1) {
         const authorHandle = mockHandles[i % mockHandles.length];
+        const authorAvatarUrl = mockAvatarUrls[i % mockAvatarUrls.length];
         generated.push({
             id: makeCommentId(videoId, i),
             videoId,
             authorHandle,
+            authorAvatarUrl,
             text: baseComments[i % baseComments.length],
             createdAt: makeCreatedAt((i + 1) * 7),
             likesCount: (i * 3) % 40,
@@ -51,6 +64,7 @@ export const generateCommentsForVideo = (videoId: string, total = 16): VideoComm
             id: `${videoId}_reply_1`,
             videoId,
             authorHandle: '@tamkko.fan',
+            authorAvatarUrl: null,
             text: '@akua totally agree with you.',
             createdAt: makeCreatedAt(11),
             likesCount: 2,

@@ -10,6 +10,7 @@ import Screen from '@/components/ui/Screen';
 import { useColors } from '@/config/colors';
 import { useAuth } from '@/context/AuthContext';
 import { buildProfileVideoCollections, ProfileVideoCollectionTab } from '@/lib/services/profileVideoCollections';
+import { myVideosService } from '@/lib/services/myVideosService';
 import { useVideoFeedStore } from '@/lib/stores/videoFeedStore';
 import { VideoItem } from '@/types/video.types';
 
@@ -33,9 +34,48 @@ export default function ProfileContentManagerScreen() {
     const { user } = useAuth();
     const videos = useVideoFeedStore((state) => state.videos);
     const [activeTab, setActiveTab] = React.useState<ProfileVideoCollectionTab>('free');
+    const [myVideos, setMyVideos] = React.useState<VideoItem[]>([]);
+    const [myVideosCursor, setMyVideosCursor] = React.useState<string | null>(null);
+    const [loadingMyVideos, setLoadingMyVideos] = React.useState(false);
+    const [loadingMoreMyVideos, setLoadingMoreMyVideos] = React.useState(false);
 
     const collections = React.useMemo(() => buildProfileVideoCollections(videos, user), [user, videos]);
-    const activeVideos = collections[activeTab];
+    const activeVideos = React.useMemo(() => {
+        if (activeTab === 'free' || activeTab === 'paid') return myVideos;
+        return collections[activeTab];
+    }, [activeTab, collections, myVideos]);
+
+    const loadMyVideos = React.useCallback(async (options?: { append?: boolean }) => {
+        const append = Boolean(options?.append);
+        const filter = activeTab === 'paid' ? 'paid' : 'free';
+        if (append) {
+            if (!myVideosCursor || loadingMoreMyVideos) return;
+            setLoadingMoreMyVideos(true);
+        } else {
+            setLoadingMyVideos(true);
+        }
+
+        try {
+            const response = await myVideosService.listMine({
+                filter,
+                cursor: append ? myVideosCursor : null,
+                limit: 20,
+            });
+            setMyVideos((current) => (append ? [...current, ...response.items.filter((item) => !current.some((c) => c.id === item.id))] : response.items));
+            setMyVideosCursor(response.nextCursor);
+        } catch {
+            if (!append) setMyVideos([]);
+        } finally {
+            if (append) setLoadingMoreMyVideos(false);
+            else setLoadingMyVideos(false);
+        }
+    }, [activeTab, loadingMoreMyVideos, myVideosCursor]);
+
+    React.useEffect(() => {
+        if (activeTab === 'free' || activeTab === 'paid') {
+            void loadMyVideos({ append: false });
+        }
+    }, [activeTab, loadMyVideos]);
 
     const horizontalPadding = 16;
     const gap = 10;
@@ -85,6 +125,12 @@ export default function ProfileContentManagerScreen() {
                 showsVerticalScrollIndicator={false}
                 removeClippedSubviews
                 contentContainerStyle={{ paddingBottom: 120 }}
+                onEndReachedThreshold={0.5}
+                onEndReached={() => {
+                    if (activeTab === 'free' || activeTab === 'paid') {
+                        void loadMyVideos({ append: true });
+                    }
+                }}
                 renderItem={({ item, index }) => (
                     <View style={{ marginBottom: 12, marginRight: index % 2 === 0 ? gap : 0 }}>
                         <VideoGridTile
@@ -144,9 +190,22 @@ export default function ProfileContentManagerScreen() {
                             Nothing here yet
                         </AppText>
                         <AppText className="mt-1 text-sm" color={colors.textSecondary}>
-                            This tab will populate as you engage with videos.
+                            {activeTab === 'free' || activeTab === 'paid'
+                                ? 'No uploaded posts found for this filter yet.'
+                                : 'This tab will populate as you engage with videos.'}
                         </AppText>
                     </View>
+                }
+                ListFooterComponent={
+                    activeTab === 'free' || activeTab === 'paid' ? (
+                        loadingMyVideos || loadingMoreMyVideos ? (
+                            <View className="py-4">
+                                <AppText className="text-center text-xs" color={colors.textSecondary}>
+                                    Loading posts...
+                                </AppText>
+                            </View>
+                        ) : null
+                    ) : null
                 }
             />
         </Screen>

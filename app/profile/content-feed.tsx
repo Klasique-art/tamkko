@@ -11,7 +11,7 @@ import Screen from '@/components/ui/Screen';
 import { useColors } from '@/config/colors';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/context/ToastContext';
-import { mockVideoManagementService } from '@/lib/services/mockVideoManagementService';
+import { myVideosService } from '@/lib/services/myVideosService';
 import { buildProfileVideoCollections, ProfileVideoCollectionTab } from '@/lib/services/profileVideoCollections';
 import { useVideoFeedStore } from '@/lib/stores/videoFeedStore';
 import { VideoItem } from '@/types/video.types';
@@ -32,9 +32,26 @@ export default function ProfileContentFeedScreen() {
     const currentTab = normalizeTab(tab);
     const actionSheetRef = React.useRef<AppBottomSheetRef>(null);
     const [selectedVideo, setSelectedVideo] = React.useState<VideoItem | null>(null);
+    const [backendVideos, setBackendVideos] = React.useState<VideoItem[]>([]);
 
     const collections = React.useMemo(() => buildProfileVideoCollections(videos, user), [user, videos]);
-    const activeVideos = collections[currentTab];
+    const activeVideos = React.useMemo(() => {
+        if (currentTab === 'free' || currentTab === 'paid') return backendVideos;
+        return collections[currentTab];
+    }, [backendVideos, collections, currentTab]);
+
+    React.useEffect(() => {
+        const load = async () => {
+            if (currentTab !== 'free' && currentTab !== 'paid') return;
+            try {
+                const response = await myVideosService.listMine({ filter: currentTab === 'paid' ? 'paid' : 'free', limit: 50 });
+                setBackendVideos(response.items);
+            } catch {
+                setBackendVideos([]);
+            }
+        };
+        void load();
+    }, [currentTab]);
 
     const openManager = React.useCallback(() => {
         router.replace('/profile/content' as Href);
@@ -55,16 +72,24 @@ export default function ProfileContentFeedScreen() {
 
     const handleDeleteVideo = React.useCallback(
         async (video: VideoItem) => {
-            const deleted = await mockVideoManagementService.deleteVideo(video.id);
-            if (deleted) {
+            try {
+                const deleted = await myVideosService.deleteMineVideo(video.id);
+                if (!deleted) {
+                    showToast('Could not delete this video.', { variant: 'error' });
+                    setSelectedVideo(null);
+                    return;
+                }
+                if (currentTab === 'free' || currentTab === 'paid') {
+                    setBackendVideos((current) => current.filter((item) => item.id !== video.id));
+                }
                 showToast('Video deleted.', { variant: 'success', duration: 1400 });
                 if (activeVideos.length <= 1) openManager();
-            } else {
+            } catch {
                 showToast('Could not delete this video.', { variant: 'error' });
             }
             setSelectedVideo(null);
         },
-        [activeVideos.length, openManager, showToast]
+        [activeVideos.length, currentTab, openManager, showToast]
     );
 
     if (activeVideos.length === 0) {
@@ -100,6 +125,8 @@ export default function ProfileContentFeedScreen() {
                 initialVideoId={videoId}
                 showMoreButton
                 onMorePress={handleMorePress}
+                useActiveVideoTitleAsNavTitle
+                hideCreatorMetaControls
             />
             <VideoManageActionSheet
                 ref={actionSheetRef}

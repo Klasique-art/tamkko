@@ -25,7 +25,7 @@ import {
     CREATE_MAX_RECORDING_SECONDS,
     imageFilterOptions,
 } from '@/data/mock';
-import { postPublishingService } from '@/lib/services/postPublishingService';
+import { postPublishingService, UploadStatusError } from '@/lib/services/postPublishingService';
 import { subscriptionPricingService } from '@/lib/services/subscriptionPricingService';
 import { useVideoFeedStore } from '@/lib/stores/videoFeedStore';
 import { CreateDraft } from '@/types/create.types';
@@ -149,7 +149,7 @@ export default function CreateTab() {
         }
 
         const result = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.All,
+            mediaTypes: ['images', 'videos'],
             allowsMultipleSelection: false,
             quality: 0.85,
             videoMaxDuration: CREATE_MAX_RECORDING_SECONDS,
@@ -565,7 +565,33 @@ export default function CreateTab() {
             addCreatedPost({ draft, creatorUsername: creatorHandle });
             showToast('Post published successfully.', { variant: 'success' });
             setDraft(initialDraft);
+            router.replace('/(tabs)');
         } catch (error: any) {
+            if (
+                error instanceof UploadStatusError &&
+                (error.code === 'UNSUPPORTED_VIDEO_CODEC' || error.code === 'UNSUPPORTED_VIDEO_PROFILE')
+            ) {
+                Alert.alert(
+                    'Unsupported video format',
+                    error.message || 'This video format is not supported. Re-export and upload again.',
+                    [
+                        { text: 'Cancel', style: 'cancel' },
+                        {
+                            text: 'Choose Another Video',
+                            onPress: () => {
+                                void pickFromGallery();
+                            },
+                        },
+                        {
+                            text: 'Record New Video',
+                            onPress: () => {
+                                void openCamera();
+                            },
+                        },
+                    ]
+                );
+                return;
+            }
             const message = typeof error?.message === 'string' ? error.message : 'Upload failed. Please try again.';
             showToast(message, { variant: 'error' });
         } finally {
@@ -656,9 +682,6 @@ export default function CreateTab() {
                     </AppText>
                     <AppText className="mt-2 text-sm leading-6" color={colors.textSecondary}>
                         Share one image or video at a time. Record directly in-app with a maximum of 60 seconds.
-                    </AppText>
-                    <AppText className="mt-2 text-xs" color={colors.textSecondary}>
-                        Uploads now use backend-integrated providers: Mux for videos and Cloudinary for images.
                     </AppText>
                 </View>
 

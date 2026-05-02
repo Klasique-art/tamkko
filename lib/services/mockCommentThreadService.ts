@@ -55,6 +55,7 @@ export const mockCommentThreadService = {
             id: `${input.videoId}_local_${Date.now()}`,
             videoId: input.videoId,
             authorHandle: '@you',
+            authorAvatarUrl: null,
             text: normalizedText,
             createdAt: now,
             likesCount: 0,

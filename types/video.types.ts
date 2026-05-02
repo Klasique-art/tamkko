@@ -4,11 +4,13 @@ export type VideoPostVisibility = 'public' | 'premium' | 'followers_only' | 'pri
 export type VideoItem = {
     id: string;
     title: string;
+    mediaType?: 'video' | 'image';
     caption?: string;
     thumbnailUrl?: string;
     playbackUrl?: string;
     videoSource?: number | { uri: string };
     creatorUsername: string;
+    viewsCount?: number;
     likesCount: number;
     commentsCount: number;
     allowComments?: boolean;

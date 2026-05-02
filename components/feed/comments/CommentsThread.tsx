@@ -7,10 +7,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import CommentComposer from '@/components/feed/comments/CommentComposer';
 import CommentListItem from '@/components/feed/comments/CommentListItem';
 import AppText from '@/components/ui/AppText';
-import { mockCommentThreadService } from '@/lib/services/mockCommentThreadService';
+import { commentService } from '@/lib/services/commentService';
 import { VideoComment } from '@/types/comment.types';
 
-const PAGE_SIZE = 14;
+const PAGE_SIZE = 30;
 
 type CommentsThreadProps = {
     videoId: string;
@@ -30,7 +30,8 @@ export default function CommentsThread({
     const insets = useSafeAreaInsets();
     const [comments, setComments] = useState<VideoComment[]>([]);
     const [isLoading, setIsLoading] = useState(true);
-    const [page, setPage] = useState(1);
+    const [nextCursor, setNextCursor] = useState<string | null>(null);
+    const [hasMoreComments, setHasMoreComments] = useState(false);
     const [commentText, setCommentText] = useState('');
     const [replyTarget, setReplyTarget] = useState<VideoComment | null>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
@@ -38,13 +39,41 @@ export default function CommentsThread({
     const [busyLikeId, setBusyLikeId] = useState<string | null>(null);
     const [keyboardInset, setKeyboardInset] = useState(0);
 
-    const visibleComments = useMemo(() => comments.slice(0, page * PAGE_SIZE), [comments, page]);
-    const hasMoreComments = visibleComments.length < comments.length;
+    const commentDepthById = useMemo(() => {
+        const byId = new Map(comments.map((comment) => [comment.id, comment]));
+        const depthCache = new Map<string, number>();
+        const MAX_DEPTH = 8;
+
+        const resolveDepth = (commentId: string): number => {
+            if (depthCache.has(commentId)) return depthCache.get(commentId)!;
+            const node = byId.get(commentId);
+            if (!node?.parentCommentId) {
+                depthCache.set(commentId, 0);
+                return 0;
+            }
+
+            let depth = 0;
+            let cursor = node.parentCommentId;
+            while (cursor && depth < MAX_DEPTH) {
+                const parent = byId.get(cursor);
+                if (!parent) break;
+                depth += 1;
+                cursor = parent.parentCommentId;
+            }
+
+            depthCache.set(commentId, depth);
+            return depth;
+        };
+
+        for (const comment of comments) resolveDepth(comment.id);
+        return depthCache;
+    }, [comments]);
 
     useEffect(() => {
         if (commentsDisabled) {
             setComments([]);
-            setPage(1);
+            setNextCursor(null);
+            setHasMoreComments(false);
             setCommentText('');
             setReplyTarget(null);
             setIsLoading(false);
@@ -54,13 +83,19 @@ export default function CommentsThread({
         let isMounted = true;
         const load = async () => {
             setIsLoading(true);
-            const data = await mockCommentThreadService.getComments(videoId);
-            if (isMounted) {
-                setComments(data);
-                setPage(1);
-                setCommentText('');
-                setReplyTarget(null);
-                setIsLoading(false);
+            try {
+                const data = await commentService.getCommentsPage(videoId, { limit: PAGE_SIZE, sort: 'oldest' });
+                if (isMounted) {
+                    setComments(data.items);
+                    setNextCursor(data.nextCursor);
+                    setHasMoreComments(data.hasMore);
+                    setCommentText('');
+                    setReplyTarget(null);
+                }
+            } finally {
+                if (isMounted) {
+                    setIsLoading(false);
+                }
             }
         };
 
@@ -95,61 +130,73 @@ export default function CommentsThread({
         if (!rawText || isSubmitting) return;
 
         setIsSubmitting(true);
-        const posted = await mockCommentThreadService.postComment({
-            videoId,
-            text: rawText,
-            parentCommentId: replyTarget?.id,
-            replyToHandle: replyTarget?.authorHandle,
-        });
+        try {
+            const posted = await commentService.createComment(videoId, {
+                body: rawText,
+                ...(replyTarget?.id ? { parent_comment_id: replyTarget.id } : {}),
+            });
 
-        setComments((current) => {
-            if (replyTarget?.id) {
-                const parentIndex = current.findIndex((comment) => comment.id === replyTarget.id);
-                if (parentIndex < 0) return [posted, ...current];
-                let insertIndex = parentIndex + 1;
-                while (insertIndex < current.length && current[insertIndex]?.parentCommentId === replyTarget.id) {
-                    insertIndex += 1;
+            setComments((current) => {
+                if (replyTarget?.id) {
+                    const parentIndex = current.findIndex((comment) => comment.id === replyTarget.id);
+                    if (parentIndex < 0) return [posted, ...current];
+                    let insertIndex = parentIndex + 1;
+                    while (insertIndex < current.length && current[insertIndex]?.parentCommentId === replyTarget.id) {
+                        insertIndex += 1;
+                    }
+                    return [...current.slice(0, insertIndex), posted, ...current.slice(insertIndex)];
                 }
-                return [...current.slice(0, insertIndex), posted, ...current.slice(insertIndex)];
-            }
-            return [posted, ...current];
-        });
+                return [posted, ...current];
+            });
 
-        setCommentText('');
-        setReplyTarget(null);
-        setPage(1);
-        setIsSubmitting(false);
-        Keyboard.dismiss();
-        onCommentCreated?.(videoId);
-        AccessibilityInfo.announceForAccessibility(replyTarget ? 'Reply posted' : 'Comment posted');
+            setCommentText('');
+            setReplyTarget(null);
+            Keyboard.dismiss();
+            onCommentCreated?.(videoId);
+            AccessibilityInfo.announceForAccessibility(replyTarget ? 'Reply posted' : 'Comment posted');
+        } finally {
+            setIsSubmitting(false);
+        }
     };
 
     const handleLikeToggle = async (comment: VideoComment) => {
-        if (busyLikeId) return;
+        if (busyLikeId || comment.isDeleted) return;
         setBusyLikeId(comment.id);
-        const updated = await mockCommentThreadService.toggleLike(videoId, comment.id);
-        if (updated) {
+        try {
+            const updated = await commentService.toggleCommentLike(comment.id);
             setComments((current) =>
-                current.map((item) => (item.id === updated.id ? { ...item, likesCount: updated.likesCount, isLiked: updated.isLiked } : item))
+                current.map((item) =>
+                    item.id === updated.commentId ? { ...item, likesCount: updated.likesCount, isLiked: updated.likedByMe } : item
+                )
             );
-            AccessibilityInfo.announceForAccessibility(updated.isLiked ? 'Comment liked' : 'Comment unliked');
+            AccessibilityInfo.announceForAccessibility(updated.likedByMe ? 'Comment liked' : 'Comment unliked');
+        } finally {
+            setBusyLikeId(null);
         }
-        setBusyLikeId(null);
     };
 
     const handleReply = (comment: VideoComment) => {
+        if (comment.isDeleted) return;
         setReplyTarget(comment);
         setCommentText(`${comment.authorHandle} `);
         AccessibilityInfo.announceForAccessibility(`Replying to ${comment.authorHandle}`);
     };
 
-    const loadMoreComments = () => {
-        if (!hasMoreComments || isPaginating) return;
+    const loadMoreComments = async () => {
+        if (!hasMoreComments || isPaginating || !nextCursor) return;
         setIsPaginating(true);
-        setTimeout(() => {
-            setPage((current) => current + 1);
+        try {
+            const data = await commentService.getCommentsPage(videoId, {
+                cursor: nextCursor,
+                limit: PAGE_SIZE,
+                sort: 'oldest',
+            });
+            setComments((current) => [...current, ...data.items]);
+            setNextCursor(data.nextCursor);
+            setHasMoreComments(data.hasMore);
+        } finally {
             setIsPaginating(false);
-        }, 180);
+        }
     };
 
     const listFooter = hasMoreComments ? (
@@ -180,11 +227,12 @@ export default function CommentsThread({
 
     const compactList = (
         <BottomSheetFlatList<VideoComment>
-            data={visibleComments}
+            data={comments}
             keyExtractor={(item: VideoComment) => item.id}
             renderItem={({ item }: { item: VideoComment }) => (
                 <CommentListItem
                     comment={item}
+                    depth={commentDepthById.get(item.id) ?? 0}
                     onReply={handleReply}
                     onToggleLike={handleLikeToggle}
                     likeBusy={busyLikeId === item.id}
@@ -209,11 +257,12 @@ export default function CommentsThread({
 
     const fullPageList = (
         <FlashList<VideoComment>
-            data={visibleComments}
+            data={comments}
             keyExtractor={(item) => item.id}
             renderItem={({ item }) => (
                 <CommentListItem
                     comment={item}
+                    depth={commentDepthById.get(item.id) ?? 0}
                     onReply={handleReply}
                     onToggleLike={handleLikeToggle}
                     likeBusy={busyLikeId === item.id}

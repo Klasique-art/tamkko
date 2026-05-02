@@ -105,6 +105,10 @@ export default function VideoGridTile({
     statLabel,
 }: VideoGridTileProps) {
     const pulseOpacity = React.useRef(new Animated.Value(0.5)).current;
+    const isVideoPost = Boolean(item.playbackUrl || item.videoSource);
+    const viewCount = Number.isFinite(Number(item.viewsCount))
+        ? Math.max(0, Number(item.viewsCount))
+        : Math.max(item.likesCount * 12, 1000);
     const staticThumbnailUri = hasRenderableThumbnail(item.thumbnailUrl) ? item.thumbnailUrl : null;
     const [thumbnailUri, setThumbnailUri] = React.useState<string | null>(staticThumbnailUri ?? null);
 
@@ -146,8 +150,8 @@ export default function VideoGridTile({
             style={{ width, height }}
             className="overflow-hidden rounded-2xl"
             accessibilityRole="button"
-            accessibilityLabel={accessibilityLabel}
-            accessibilityHint="Opens video playback with management controls."
+            accessibilityLabel={`${accessibilityLabel}. ${isVideoPost ? 'Video post' : 'Image post'}. ${formatCompact(viewCount)} views.`}
+            accessibilityHint={isVideoPost ? 'Opens video playback with management controls.' : 'Opens image post with management controls.'}
         >
             {thumbnailUri ? (
                 <Image
@@ -174,7 +178,7 @@ export default function VideoGridTile({
                             className="items-center justify-center rounded-full"
                             style={{ width: 40, height: 40, backgroundColor: 'rgba(255,255,255,0.16)' }}
                         >
-                            <Ionicons name="play" size={18} color="#FFFFFF" />
+                            <Ionicons name={isVideoPost ? 'play' : 'image-outline'} size={18} color="#FFFFFF" />
                         </View>
                     </View>
                 </View>
@@ -182,15 +186,18 @@ export default function VideoGridTile({
 
             <View className="absolute inset-0" style={{ backgroundColor: 'rgba(0,0,0,0.18)' }} />
             <View className="absolute left-2 top-2 rounded-full px-2 py-1" style={{ backgroundColor: 'rgba(0,0,0,0.42)' }}>
-                <AppText className="text-[10px] font-semibold" color="#FFFFFF" numberOfLines={1}>
-                    {item.creatorUsername}
-                </AppText>
+                <View className="flex-row items-center">
+                    <Ionicons name="eye-outline" size={11} color="#FFFFFF" />
+                    <AppText className="ml-1 text-[10px] font-semibold" color="#FFFFFF">
+                        {formatCompact(viewCount)}
+                    </AppText>
+                </View>
             </View>
             <View className="absolute bottom-2 right-2 rounded-full px-2 py-1" style={{ backgroundColor: 'rgba(0,0,0,0.52)' }}>
                 <View className="flex-row items-center">
-                    <Ionicons name="play" size={11} color="#FFFFFF" />
+                    <Ionicons name={isVideoPost ? 'play' : 'image-outline'} size={11} color="#FFFFFF" />
                     <AppText className="ml-1 text-[10px] font-semibold" color="#FFFFFF">
-                        {statLabel ?? formatCompact(Math.max(item.likesCount * 12, 1000))}
+                        {isVideoPost ? (statLabel ?? formatCompact(Math.max(item.likesCount * 12, 1000))) : 'Image'}
                     </AppText>
                 </View>
             </View>

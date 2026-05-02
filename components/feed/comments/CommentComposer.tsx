@@ -69,7 +69,7 @@ export default function CommentComposer({
                     onChangeText={onChangeText}
                     placeholder="Write a comment"
                     multiline
-                    maxLength={280}
+                    maxLength={2000}
                     style={{
                         flex: 1,
                         borderWidth: 1,

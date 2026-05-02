@@ -9,7 +9,7 @@ import Screen from '@/components/ui/Screen';
 import { useColors } from '@/config/colors';
 import { useToast } from '@/context/ToastContext';
 import { CREATE_MAX_CAPTION_LENGTH } from '@/data/mock';
-import { mockVideoManagementService } from '@/lib/services/mockVideoManagementService';
+import { myVideosService } from '@/lib/services/myVideosService';
 import { CreateVisibility } from '@/types/create.types';
 import { VideoItem } from '@/types/video.types';
 
@@ -20,11 +20,9 @@ const toCreateVisibility = (value?: VideoItem['postVisibility']): CreateVisibili
     return 'public';
 };
 
-const toPostVisibility = (value: CreateVisibility): NonNullable<VideoItem['postVisibility']> => {
-    if (value === 'followers_only') return 'followers_only';
-    if (value === 'premium') return 'premium';
-    if (value === 'private') return 'private';
-    return 'public';
+const toBackendVisibility = (value: CreateVisibility): 'public' | 'paid' | 'followers_only' | 'private' => {
+    if (value === 'premium') return 'paid';
+    return value;
 };
 
 export default function EditVideoScreen() {
@@ -34,40 +32,44 @@ export default function EditVideoScreen() {
     const safeVideoId = videoId ?? '';
 
     const [video, setVideo] = React.useState<VideoItem | null>(null);
-    const [title, setTitle] = React.useState('');
     const [caption, setCaption] = React.useState('');
     const [visibility, setVisibility] = React.useState<CreateVisibility>('public');
     const [allowComments, setAllowComments] = React.useState(true);
     const [saving, setSaving] = React.useState(false);
+    const screenTitle = video?.mediaType === 'image' ? 'Edit Image' : 'Edit Video';
 
     React.useEffect(() => {
         const load = async () => {
             if (!safeVideoId) return;
-            const item = await mockVideoManagementService.getVideoById(safeVideoId);
-            setVideo(item);
-            if (!item) return;
-            setTitle(item.title);
-            setCaption(item.caption ?? '');
-            setVisibility(toCreateVisibility(item.postVisibility));
-            setAllowComments(item.allowComments !== false);
+            try {
+                const item = await myVideosService.getMineVideo(safeVideoId);
+                setVideo(item);
+                if (!item) return;
+                setCaption(item.caption ?? '');
+                setVisibility(toCreateVisibility(item.postVisibility));
+                setAllowComments(item.allowComments !== false);
+            } catch {
+                setVideo(null);
+            }
         };
         void load();
     }, [safeVideoId]);
 
     const saveChanges = React.useCallback(async () => {
         if (!video) return;
-        if (!title.trim()) {
-            showToast('Title cannot be empty.', { variant: 'warning' });
-            return;
-        }
         setSaving(true);
-        const updated = await mockVideoManagementService.updateVideoMetadata(video.id, {
-            title: title.trim(),
-            caption: caption.trim(),
-            allowComments,
-            postVisibility: toPostVisibility(visibility),
-        });
-        setSaving(false);
+        let updated: VideoItem | null = null;
+        try {
+            updated = await myVideosService.updateMineVideo(video.id, {
+                caption: caption.trim(),
+                allow_comments: allowComments,
+                visibility: toBackendVisibility(visibility),
+            });
+        } catch {
+            updated = null;
+        } finally {
+            setSaving(false);
+        }
 
         if (!updated) {
             showToast('Could not save changes.', { variant: 'error' });
@@ -75,20 +77,20 @@ export default function EditVideoScreen() {
         }
         setVideo(updated);
         showToast('Video updated successfully.', { variant: 'success', duration: 1500 });
-    }, [allowComments, caption, showToast, title, video, visibility]);
+    }, [allowComments, caption, showToast, video, visibility]);
 
     if (!video) {
         return (
-            <Screen title="Edit Video">
+            <Screen title="Edit Post">
                 <View className="rounded-xl border p-4" style={{ borderColor: colors.border, backgroundColor: colors.backgroundAlt }}>
-                    <AppText className="text-base font-bold" color={colors.textPrimary}>Video not found</AppText>
-                    <AppText className="mt-1 text-sm" color={colors.textSecondary}>This video may not exist in the current local feed store.</AppText>
+                    <AppText className="text-base font-bold" color={colors.textPrimary}>Post not found</AppText>
+                    <AppText className="mt-1 text-sm" color={colors.textSecondary}>This post does not exist or you do not have access to edit it.</AppText>
                     <Pressable
-                        onPress={() => router.push('/video/saved' as Href)}
+                        onPress={() => router.push('/profile/content' as Href)}
                         className="mt-3 rounded-xl border py-3"
                         style={{ borderColor: colors.border, backgroundColor: colors.background }}
                     >
-                        <AppText className="text-center text-sm font-semibold" color={colors.textPrimary}>Go to Saved Videos</AppText>
+                        <AppText className="text-center text-sm font-semibold" color={colors.textPrimary}>Go To My Videos</AppText>
                     </Pressable>
                 </View>
             </Screen>
@@ -96,29 +98,10 @@ export default function EditVideoScreen() {
     }
 
     return (
-        <Screen title="Edit Video" className="pt-3">
+        <Screen title={screenTitle} className="pt-3">
             <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 120 }}>
-                <View className="rounded-2xl border p-4" style={{ borderColor: colors.border, backgroundColor: colors.backgroundAlt }}>
-                    <AppText className="text-sm font-semibold" color={colors.textPrimary}>Editing</AppText>
-                    <AppText className="mt-1 text-base font-bold" color={colors.textPrimary}>{video.title}</AppText>
-                    <AppText className="mt-1 text-xs" color={colors.textSecondary}>{video.creatorUsername} - {video.id}</AppText>
-                </View>
-
                 <View className="mt-4 rounded-2xl border p-4" style={{ borderColor: colors.border, backgroundColor: colors.backgroundAlt }}>
-                    <AppText className="text-sm font-semibold" color={colors.textPrimary}>Title</AppText>
-                    <View className="mt-2 rounded-xl border px-3" style={{ borderColor: colors.border, backgroundColor: colors.background }}>
-                        <TextInput
-                            value={title}
-                            onChangeText={setTitle}
-                            maxLength={80}
-                            placeholder="Video title"
-                            placeholderTextColor={colors.textSecondary}
-                            style={{ color: colors.textPrimary, paddingVertical: 12 }}
-                            accessibilityLabel="Video title"
-                        />
-                    </View>
-
-                    <AppText className="mt-3 text-sm font-semibold" color={colors.textPrimary}>Caption</AppText>
+                    <AppText className="text-sm font-semibold" color={colors.textPrimary}>Caption</AppText>
                     <View className="mt-2 rounded-xl border px-3" style={{ borderColor: colors.border, backgroundColor: colors.background }}>
                         <TextInput
                             value={caption}
@@ -151,18 +134,11 @@ export default function EditVideoScreen() {
                     </View>
                 </View>
 
-                <View className="mt-4 flex-row">
-                    <Pressable
-                        onPress={() => router.push(`/video/${encodeURIComponent(video.id)}` as Href)}
-                        className="mr-2 flex-1 rounded-xl border py-3"
-                        style={{ borderColor: colors.border, backgroundColor: colors.backgroundAlt }}
-                    >
-                        <AppText className="text-center text-sm font-semibold" color={colors.textPrimary}>Open Video</AppText>
-                    </Pressable>
+                <View className="mt-4">
                     <Pressable
                         onPress={() => void saveChanges()}
                         disabled={saving}
-                        className="flex-1 rounded-xl border py-3"
+                        className="rounded-xl border py-3"
                         style={{ borderColor: colors.border, backgroundColor: colors.backgroundAlt, opacity: saving ? 0.7 : 1 }}
                     >
                         <AppText className="text-center text-sm font-semibold" color={colors.textPrimary}>{saving ? 'Saving...' : 'Save Changes'}</AppText>
