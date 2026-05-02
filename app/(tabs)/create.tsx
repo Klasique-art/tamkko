@@ -1,11 +1,12 @@
 import { Ionicons } from '@expo/vector-icons';
+import { router } from 'expo-router';
 import { CameraView, useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import * as VideoThumbnails from 'expo-video-thumbnails';
 import React from 'react';
-import { PanResponder, Pressable, ScrollView, TextInput, View } from 'react-native';
+import { Alert, PanResponder, Pressable, ScrollView, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
@@ -24,7 +25,8 @@ import {
     CREATE_MAX_RECORDING_SECONDS,
     imageFilterOptions,
 } from '@/data/mock';
-import { simulateCreateUpload } from '@/lib/services/mockCreateUploadService';
+import { postPublishingService } from '@/lib/services/postPublishingService';
+import { subscriptionPricingService } from '@/lib/services/subscriptionPricingService';
 import { useVideoFeedStore } from '@/lib/stores/videoFeedStore';
 import { CreateDraft } from '@/types/create.types';
 
@@ -37,6 +39,10 @@ const initialDraft: CreateDraft = {
     imageFilter: 'original',
 };
 const MIN_TRIM_WINDOW_SECONDS = 0.1;
+const toBackendVisibility = (value: CreateDraft['visibility']): 'public' | 'paid' | 'followers_only' | 'private' => {
+    if (value === 'premium') return 'paid';
+    return value;
+};
 
 export default function CreateTab() {
     const colors = useColors();
@@ -425,6 +431,30 @@ export default function CreateTab() {
             showToast('Select media before publishing.', { variant: 'warning' });
             return;
         }
+        const isPaid = draft.visibility === 'premium';
+        let paidPriceFromProfile: number | null = null;
+        if (isPaid) {
+            try {
+                const currentPrice = await subscriptionPricingService.getPrice();
+                if (!Number.isFinite(currentPrice) || currentPrice <= 0) {
+                    throw new Error('INVALID_SUBSCRIPTION_PRICE');
+                }
+                paidPriceFromProfile = Number(currentPrice.toFixed(2));
+            } catch {
+                Alert.alert(
+                    'Set subscription price first',
+                    'Paid posts use your Subscription Pricing value. Set it before publishing paid posts.',
+                    [
+                        { text: 'Cancel', style: 'cancel' },
+                        {
+                            text: 'Open Subscription Pricing',
+                            onPress: () => router.push('/profile/subscription-pricing'),
+                        },
+                    ]
+                );
+                return;
+            }
+        }
 
         if (draft.media?.type === 'video') {
             commitTrimDurationToDraft(trimStartRef.current, trimEndRef.current);
@@ -435,19 +465,109 @@ export default function CreateTab() {
         setUploadStage('preparing');
 
         try {
-            await simulateCreateUpload(draft, ({ progress, stage }) => {
-                setUploadProgress(progress);
-                setUploadStage(stage);
-            });
+            let uploadedVideo:
+                | { post_id: string; upload_id: string }
+                | null = null;
+            let uploadedImage:
+                | {
+                    secure_url: string;
+                    public_id: string;
+                    width: number;
+                    height: number;
+                    format: string;
+                    bytes: number;
+                }
+                | null = null;
+
+            if (draft.media.type === 'video') {
+                setUploadProgress(0.12);
+                const init = await postPublishingService.initVideoUpload({
+                    title: draft.caption.trim() || 'Creator Upload Draft',
+                    description: draft.caption.trim() || undefined,
+                    tags: [],
+                    category: 'general',
+                });
+
+                setUploadStage('uploading');
+                setUploadProgress(0.38);
+                await postPublishingService.uploadVideoToMux({
+                    uploadUrl: init.upload_url,
+                    fileUri: draft.media.uri,
+                    fileName: draft.media.fileName,
+                    fileSize: draft.media.fileSize,
+                    onProgress: (progress) => {
+                        // Keep upload stage progress mapped into a visible mid-range.
+                        setUploadProgress(0.2 + progress * 0.55);
+                    },
+                });
+                uploadedVideo = { post_id: init.post_id, upload_id: init.upload_id };
+
+                setUploadStage('processing');
+                setUploadProgress(0.72);
+                await postPublishingService.waitForVideoReady(init.post_id);
+            } else {
+                setUploadProgress(0.14);
+                const imageConfig = await postPublishingService.getImageUploadConfig();
+
+                if (
+                    draft.media.fileSize &&
+                    draft.media.fileSize > imageConfig.max_size_mb * 1024 * 1024
+                ) {
+                    throw new Error(`Image must be under ${imageConfig.max_size_mb}MB.`);
+                }
+
+                setUploadStage('uploading');
+                setUploadProgress(0.52);
+                uploadedImage = await postPublishingService.uploadImageToCloudinary({
+                    imageUri: draft.media.uri,
+                    uploadUrl: imageConfig.upload_url,
+                    uploadPreset: imageConfig.upload_preset,
+                    folder: imageConfig.folder,
+                    fileName: draft.media.fileName,
+                });
+            }
+
+            setUploadStage('processing');
+            setUploadProgress(0.9);
+            if (draft.media.type === 'video') {
+                if (!uploadedVideo?.upload_id) throw new Error('Missing video upload reference.');
+                await postPublishingService.publishPost({
+                    media_type: 'video',
+                    upload_id: uploadedVideo.upload_id,
+                    caption: draft.caption.trim() || undefined,
+                    visibility: toBackendVisibility(draft.visibility),
+                    allow_comments: draft.allowComments,
+                    price_ghs: isPaid ? paidPriceFromProfile : null,
+                });
+            } else {
+                if (!uploadedImage) throw new Error('Missing image upload metadata.');
+                await postPublishingService.publishPost({
+                    media_type: 'image',
+                    caption: draft.caption.trim() || undefined,
+                    visibility: toBackendVisibility(draft.visibility),
+                    allow_comments: draft.allowComments,
+                    price_ghs: isPaid ? paidPriceFromProfile : null,
+                    image_url: uploadedImage.secure_url,
+                    image_public_id: uploadedImage.public_id,
+                    width: uploadedImage.width,
+                    height: uploadedImage.height,
+                    format: uploadedImage.format,
+                    bytes: uploadedImage.bytes,
+                });
+            }
+
+            setUploadStage('done');
+            setUploadProgress(1);
 
             const creatorHandle = user?.first_name?.trim()
                 ? `@${user.first_name.trim().toLowerCase().replace(/\s+/g, '.')}`
                 : '@creator';
             addCreatedPost({ draft, creatorUsername: creatorHandle });
-            showToast('Post uploaded successfully (simulated).', { variant: 'success' });
+            showToast('Post published successfully.', { variant: 'success' });
             setDraft(initialDraft);
-        } catch {
-            showToast('Upload failed. Please try again.', { variant: 'error' });
+        } catch (error: any) {
+            const message = typeof error?.message === 'string' ? error.message : 'Upload failed. Please try again.';
+            showToast(message, { variant: 'error' });
         } finally {
             setIsUploading(false);
         }
@@ -538,7 +658,7 @@ export default function CreateTab() {
                         Share one image or video at a time. Record directly in-app with a maximum of 60 seconds.
                     </AppText>
                     <AppText className="mt-2 text-xs" color={colors.textSecondary}>
-                        API note: current backend upload docs are video-first. Image posting is UI-simulated for now.
+                        Uploads now use backend-integrated providers: Mux for videos and Cloudinary for images.
                     </AppText>
                 </View>
 

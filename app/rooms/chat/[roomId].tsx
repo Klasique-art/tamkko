@@ -593,8 +593,8 @@ export default function RoomChatScreen() {
                     <View
                         style={{
                             position: 'absolute',
-                            top: 54,
-                            right: 10,
+                            top: 8,
+                            right: 8,
                             minWidth: 190,
                             borderRadius: 12,
                             borderWidth: 1,

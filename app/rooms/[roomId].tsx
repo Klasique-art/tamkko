@@ -8,6 +8,7 @@ import AppButton from '@/components/ui/AppButton';
 import AppText from '@/components/ui/AppText';
 import Screen from '@/components/ui/Screen';
 import { useColors } from '@/config/colors';
+import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/context/ToastContext';
 import { roomService } from '@/lib/services/roomService';
 import { VipRoom } from '@/types/room.types';
@@ -17,6 +18,7 @@ const formatEntryFee = (fee: number) => (fee === 0 ? 'Free Entry' : `GHS ${fee.t
 export default function RoomDetailScreen() {
     const colors = useColors();
     const { showToast } = useToast();
+    const { user } = useAuth();
     const { roomId } = useLocalSearchParams<{ roomId: string }>();
 
     const [room, setRoom] = useState<VipRoom | null>(null);
@@ -48,12 +50,22 @@ export default function RoomDetailScreen() {
         void loadRoom();
     }, [loadRoom]);
 
+    const currentUserId = String(user?._id ?? user?.user_id ?? '');
+    const isCreator = useMemo(() => {
+        if (!room) return false;
+        return Boolean(
+            room.role === 'creator' ||
+            (currentUserId && room.creatorId === currentUserId) ||
+            (user?.username && room.creatorUsername === user.username)
+        );
+    }, [room, currentUserId, user?.username]);
+
     const canAccessRoom = useMemo(() => {
         if (!room) return false;
-        if (room.role === 'creator') return true;
+        if (isCreator) return true;
         if (room.entryFee === 0) return room.hasJoined;
         return room.hasJoined && room.hasPaid;
-    }, [room]);
+    }, [room, isCreator]);
 
     const handleJoinRoom = async () => {
         if (!room || isJoining) return;
@@ -164,7 +176,7 @@ export default function RoomDetailScreen() {
                             { label: 'Entry', value: formatEntryFee(room.entryFee) },
                             { label: 'Online', value: `${room.onlineCount}` },
                             { label: 'Members', value: `${room.memberCount}/${room.capacity}` },
-                            { label: 'Creator', value: `@${room.creatorUsername}` },
+                            { label: 'Creator', value: isCreator ? 'You' : `@${room.creatorUsername}` },
                         ].map((item) => (
                             <View key={item.label} className="mb-2 w-1/2 pr-2">
                                 <View className="rounded-xl px-3 py-2" style={{ backgroundColor: 'rgba(255,255,255,0.16)' }}>
@@ -214,22 +226,10 @@ export default function RoomDetailScreen() {
                         </AppText>
 
                         <View className="mt-3 flex-row">
-                            <Pressable
-                                onPress={() => router.push(`/rooms/chat/${room.id}`)}
-                                className="mr-2 flex-1 rounded-xl py-3"
-                                style={{ backgroundColor: colors.textPrimary }}
-                                accessibilityRole="button"
-                                accessibilityLabel="Enter room chat"
-                            >
-                                <AppText className="text-center text-sm font-semibold" color={colors.background}>
-                                    Enter Chat
-                                </AppText>
-                            </Pressable>
-
-                            {room.role === 'creator' ? (
+                            {isCreator ? (
                                 <Pressable
                                     onPress={() => router.push(`/rooms/manage/${room.id}`)}
-                                    className="flex-1 rounded-xl border py-3"
+                                    className="mr-2 flex-1 rounded-xl border py-3"
                                     style={{ borderColor: colors.border, backgroundColor: colors.background }}
                                     accessibilityRole="button"
                                     accessibilityLabel="Manage room"
@@ -239,6 +239,18 @@ export default function RoomDetailScreen() {
                                     </AppText>
                                 </Pressable>
                             ) : null}
+
+                            <Pressable
+                                onPress={() => router.push(`/rooms/chat/${room.id}`)}
+                                className="flex-1 rounded-xl py-3"
+                                style={{ backgroundColor: colors.textPrimary }}
+                                accessibilityRole="button"
+                                accessibilityLabel="Enter room chat"
+                            >
+                                <AppText className="text-center text-sm font-semibold" color={colors.background}>
+                                    Enter Chat
+                                </AppText>
+                            </Pressable>
                         </View>
                     </View>
                 ) : (
@@ -246,50 +258,58 @@ export default function RoomDetailScreen() {
                         <AppText className="text-base font-bold" color={colors.textPrimary}>
                             Join This Room
                         </AppText>
-                        <AppText className="mt-1 text-sm" color={colors.textSecondary}>
-                            For paid rooms, backend handles payment and access. Add a promo code if you have one.
-                        </AppText>
-
-                        <View className="mt-3 rounded-xl border px-3" style={{ borderColor: colors.border, backgroundColor: colors.background }}>
-                            <TextInput
-                                value={codeInput}
-                                onChangeText={(value) => {
-                                    setCodeInput(value);
-                                    setPreview(null);
-                                }}
-                                placeholder="Promo code (optional)"
-                                placeholderTextColor={colors.textSecondary}
-                                autoCapitalize="characters"
-                                style={{ color: colors.textPrimary, paddingVertical: 12 }}
-                                accessibilityLabel="Promo code"
-                            />
-                        </View>
-
-                        <Pressable
-                            onPress={() => {
-                                void Haptics.selectionAsync();
-                                void handlePreviewCode();
-                            }}
-                            className="mt-2 rounded-xl border py-3"
-                            style={{ borderColor: colors.border, backgroundColor: colors.background }}
-                            accessibilityRole="button"
-                            accessibilityLabel="Preview promo code"
-                        >
-                            <AppText className="text-center text-sm font-semibold" color={colors.textPrimary}>
-                                {previewing ? 'Checking...' : 'Apply Promo Code'}
-                            </AppText>
-                        </Pressable>
-
-                        {preview ? (
-                            <View className="mt-3 rounded-xl border px-3 py-3" style={{ borderColor: `${colors.success}55`, backgroundColor: `${colors.success}14` }}>
-                                <AppText className="text-xs font-semibold" color={colors.success}>
-                                    Code {preview.codeString} applied
-                                </AppText>
+                        {room.entryFee > 0 ? (
+                            <>
                                 <AppText className="mt-1 text-sm" color={colors.textSecondary}>
-                                    Original: GHS {preview.originalAmount.toFixed(2)} • Discount: GHS {preview.discountAmount.toFixed(2)} • Payable: GHS {preview.payableAmount.toFixed(2)}
+                                    For paid rooms, backend handles payment and access. Add a promo code if you have one.
                                 </AppText>
-                            </View>
-                        ) : null}
+
+                                <View className="mt-3 rounded-xl border px-3" style={{ borderColor: colors.border, backgroundColor: colors.background }}>
+                                    <TextInput
+                                        value={codeInput}
+                                        onChangeText={(value) => {
+                                            setCodeInput(value);
+                                            setPreview(null);
+                                        }}
+                                        placeholder="Promo code (optional)"
+                                        placeholderTextColor={colors.textSecondary}
+                                        autoCapitalize="characters"
+                                        style={{ color: colors.textPrimary, paddingVertical: 12 }}
+                                        accessibilityLabel="Promo code"
+                                    />
+                                </View>
+
+                                <Pressable
+                                    onPress={() => {
+                                        void Haptics.selectionAsync();
+                                        void handlePreviewCode();
+                                    }}
+                                    className="mt-2 rounded-xl border py-3"
+                                    style={{ borderColor: colors.border, backgroundColor: colors.background }}
+                                    accessibilityRole="button"
+                                    accessibilityLabel="Preview promo code"
+                                >
+                                    <AppText className="text-center text-sm font-semibold" color={colors.textPrimary}>
+                                        {previewing ? 'Checking...' : 'Apply Promo Code'}
+                                    </AppText>
+                                </Pressable>
+
+                                {preview ? (
+                                    <View className="mt-3 rounded-xl border px-3 py-3" style={{ borderColor: `${colors.success}55`, backgroundColor: `${colors.success}14` }}>
+                                        <AppText className="text-xs font-semibold" color={colors.success}>
+                                            Code {preview.codeString} applied
+                                        </AppText>
+                                        <AppText className="mt-1 text-sm" color={colors.textSecondary}>
+                                            Original: GHS {preview.originalAmount.toFixed(2)} • Discount: GHS {preview.discountAmount.toFixed(2)} • Payable: GHS {preview.payableAmount.toFixed(2)}
+                                        </AppText>
+                                    </View>
+                                ) : null}
+                            </>
+                        ) : (
+                            <AppText className="mt-1 text-sm" color={colors.textSecondary}>
+                                This room is free to join.
+                            </AppText>
+                        )}
 
                         <AppButton
                             title={`Join Room${room.entryFee > 0 ? ` • GHS ${(preview?.payableAmount ?? room.entryFee).toFixed(2)}` : ''}`}

@@ -1,13 +1,14 @@
 import * as Haptics from 'expo-haptics';
 import { router, useLocalSearchParams } from 'expo-router';
 import React, { useCallback, useMemo, useState } from 'react';
-import { Pressable, ScrollView, Switch, TextInput, View } from 'react-native';
+import { Alert, Pressable, ScrollView, Switch, TextInput, View } from 'react-native';
 
 import AppButton from '@/components/ui/AppButton';
 import AppModal from '@/components/ui/AppModal';
 import AppText from '@/components/ui/AppText';
 import Screen from '@/components/ui/Screen';
 import { useColors } from '@/config/colors';
+import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/context/ToastContext';
 import { roomService } from '@/lib/services/roomService';
 import { RoomCreatorCode, VipRoom } from '@/types/room.types';
@@ -52,6 +53,7 @@ export default function RoomManageScreen() {
     const colors = useColors();
     const placeholderColor = colors.background === '#121212' ? '#8A8A8A' : colors.textSecondary;
     const { showToast } = useToast();
+    const { user } = useAuth();
     const { roomId } = useLocalSearchParams<{ roomId: string }>();
 
     const [room, setRoom] = useState<VipRoom | null>(null);
@@ -99,6 +101,16 @@ export default function RoomManageScreen() {
         void load();
     }, [load]);
 
+    const currentUserId = String(user?._id ?? user?.user_id ?? '');
+    const isCreator = useMemo(() => {
+        if (!room) return false;
+        return Boolean(
+            room.role === 'creator' ||
+            (currentUserId && room.creatorId === currentUserId) ||
+            (user?.username && room.creatorUsername === user.username)
+        );
+    }, [room, currentUserId, user?.username]);
+
     const validation = useMemo(() => {
         if (!room) return 'Room not available.';
         const normalizedEntryFee = entryFee.trim();
@@ -130,10 +142,6 @@ export default function RoomManageScreen() {
         setRoom(updated);
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         showToast('Room settings updated.', { variant: 'success', duration: 2200 });
-    };
-
-    const handleCloseRoom = async () => {
-        showToast('Room closing is pending backend support. Delete room if needed.', { variant: 'info', duration: 2600 });
     };
 
     const handleDeleteRoom = async () => {
@@ -264,7 +272,7 @@ export default function RoomManageScreen() {
         );
     }
 
-    if (room.role !== 'creator') {
+    if (!isCreator) {
         return (
             <Screen title="Manage Room">
                 <View className="rounded-xl border px-4 py-4" style={{ borderColor: `${colors.warning}55`, backgroundColor: `${colors.warning}14` }}>
@@ -531,31 +539,32 @@ export default function RoomManageScreen() {
                         Danger Zone
                     </AppText>
                     <AppText className="mt-1 text-sm" color={colors.textSecondary}>
-                        Close or permanently delete this room.
+                        Permanently delete this room.
                     </AppText>
 
-                    <View className="mt-3 flex-row">
+                    <View className="mt-3">
                         <Pressable
                             onPress={() => {
-                                void Haptics.selectionAsync();
-                                void handleCloseRoom();
+                                Alert.alert(
+                                    'Delete room?',
+                                    'This action is permanent and cannot be undone.',
+                                    [
+                                        {
+                                            text: 'Cancel',
+                                            style: 'cancel',
+                                        },
+                                        {
+                                            text: 'Delete',
+                                            style: 'destructive',
+                                            onPress: () => {
+                                                void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+                                                void handleDeleteRoom();
+                                            },
+                                        },
+                                    ]
+                                );
                             }}
-                            className="mr-2 flex-1 rounded-xl border py-3"
-                            style={{ borderColor: `${colors.warning}60`, backgroundColor: `${colors.warning}12` }}
-                            accessibilityRole="button"
-                            accessibilityLabel="Close room"
-                        >
-                            <AppText className="text-center text-sm font-semibold" color={colors.warning}>
-                                Close Room
-                            </AppText>
-                        </Pressable>
-
-                        <Pressable
-                            onPress={() => {
-                                void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-                                void handleDeleteRoom();
-                            }}
-                            className="flex-1 rounded-xl border py-3"
+                            className="rounded-xl border py-3"
                             style={{ borderColor: `${colors.error}60`, backgroundColor: `${colors.error}12` }}
                             accessibilityRole="button"
                             accessibilityLabel="Delete room permanently"

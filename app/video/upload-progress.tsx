@@ -4,13 +4,13 @@ import React from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
 
 import { CreateUploadProgress } from '@/components/create';
+import { UploadStage } from '@/components/create/CreateUploadProgress';
 import AppText from '@/components/ui/AppText';
 import Screen from '@/components/ui/Screen';
 import { useColors } from '@/config/colors';
 import { mockVideoManagementService, VideoUploadJob } from '@/lib/services/mockVideoManagementService';
-import { MockUploadStage } from '@/lib/services/mockCreateUploadService';
 
-const safeStage = (stage: VideoUploadJob['stage']): MockUploadStage => {
+const safeStage = (stage: VideoUploadJob['stage']): UploadStage => {
     if (stage === 'failed') return 'processing';
     return stage;
 };

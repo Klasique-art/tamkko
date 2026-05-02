@@ -1,8 +1,9 @@
 import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
 import React, { useCallback, useMemo, useState } from 'react';
-import { Pressable, ScrollView, TextInput, View } from 'react-native';
+import { Pressable, RefreshControl, ScrollView, TextInput, View } from 'react-native';
 
+import EmptyState from '@/components/ui/EmptyState';
 import AppText from '@/components/ui/AppText';
 import Screen from '@/components/ui/Screen';
 import { useColors } from '@/config/colors';
@@ -10,6 +11,7 @@ import { roomService } from '@/lib/services/roomService';
 import { VipRoom } from '@/types/room.types';
 
 type RoomFilter = 'all' | 'free' | 'paid' | 'joined';
+const SEARCH_DEBOUNCE_MS = 350;
 
 const formatFee = (fee: number) => (fee === 0 ? 'Free' : `GHS ${fee.toFixed(2)}`);
 
@@ -17,26 +19,41 @@ export default function RoomsHomeScreen() {
     const colors = useColors();
     const [rooms, setRooms] = useState<VipRoom[]>([]);
     const [search, setSearch] = useState('');
+    const [debouncedSearch, setDebouncedSearch] = useState('');
     const [filter, setFilter] = useState<RoomFilter>('all');
     const [loading, setLoading] = useState(true);
+    const [refreshing, setRefreshing] = useState(false);
 
-    const load = useCallback(async () => {
-        setLoading(true);
+    React.useEffect(() => {
+        const timeout = setTimeout(() => {
+            setDebouncedSearch(search.trim());
+        }, SEARCH_DEBOUNCE_MS);
+        return () => clearTimeout(timeout);
+    }, [search]);
+
+    const load = useCallback(async (options?: { silent?: boolean }) => {
+        if (!options?.silent) setLoading(true);
         try {
-            const response = await roomService.listPublicRooms({ query: search.trim(), limit: 50 });
+            const response = await roomService.listPublicRooms({ query: debouncedSearch, limit: 50 });
             setRooms(response.rooms);
         } catch {
             setRooms([]);
         }
-        setLoading(false);
-    }, [search]);
+        if (!options?.silent) setLoading(false);
+    }, [debouncedSearch]);
 
     React.useEffect(() => {
         void load();
     }, [load]);
 
+    const handleRefresh = useCallback(async () => {
+        setRefreshing(true);
+        await load({ silent: true });
+        setRefreshing(false);
+    }, [load]);
+
     const filteredRooms = useMemo(() => {
-        const normalizedSearch = search.trim().toLowerCase();
+        const normalizedSearch = debouncedSearch.toLowerCase();
         return rooms.filter((room) => {
             if (filter === 'free' && room.entryFee !== 0) return false;
             if (filter === 'paid' && room.entryFee === 0) return false;
@@ -52,17 +69,20 @@ export default function RoomsHomeScreen() {
 
     return (
         <Screen title="Browse Rooms" className="pt-2">
-            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 100 }}>
-                <View className="rounded-2xl border px-4 py-4" style={{ borderColor: colors.border, backgroundColor: colors.backgroundAlt }}>
-                    <AppText className="text-lg font-bold" color={colors.textPrimary}>
-                        Discover VIP Community Rooms
-                    </AppText>
-                    <AppText className="mt-1 text-sm" color={colors.textSecondary}>
-                        Browse creator rooms, filter by access type, and open any room to join or enter chat.
-                    </AppText>
-                </View>
-
-                <View className="mt-3 rounded-xl border px-3" style={{ borderColor: colors.border, backgroundColor: colors.background }}>
+            <ScrollView
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={{ paddingBottom: 100 }}
+                refreshControl={
+                    <RefreshControl
+                        refreshing={refreshing}
+                        onRefresh={() => {
+                            void handleRefresh();
+                        }}
+                        tintColor={colors.accent}
+                    />
+                }
+            >
+                <View className="rounded-xl border px-3" style={{ borderColor: colors.border, backgroundColor: colors.background }}>
                     <TextInput
                         value={search}
                         onChangeText={setSearch}
@@ -111,11 +131,11 @@ export default function RoomsHomeScreen() {
                     ) : null}
 
                     {!loading && filteredRooms.length === 0 ? (
-                        <View className="rounded-xl border px-4 py-4" style={{ borderColor: colors.border, backgroundColor: colors.backgroundAlt }}>
-                            <AppText className="text-sm" color={colors.textSecondary}>
-                                No rooms match this filter.
-                            </AppText>
-                        </View>
+                        <EmptyState
+                            title="No rooms found"
+                            description="Try another search term or filter, then pull down to refresh."
+                            iconName="people-outline"
+                        />
                     ) : null}
 
                     {filteredRooms.map((room) => (

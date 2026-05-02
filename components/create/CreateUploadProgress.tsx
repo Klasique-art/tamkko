@@ -3,14 +3,15 @@ import { View } from 'react-native';
 
 import AppText from '@/components/ui/AppText';
 import { useColors } from '@/config/colors';
-import { MockUploadStage } from '@/lib/services/mockCreateUploadService';
+
+export type UploadStage = 'preparing' | 'uploading' | 'processing' | 'done';
 
 type CreateUploadProgressProps = {
     progress: number;
-    stage: MockUploadStage;
+    stage: UploadStage;
 };
 
-const stageLabel: Record<MockUploadStage, string> = {
+const stageLabel: Record<UploadStage, string> = {
     preparing: 'Preparing media',
     uploading: 'Uploading securely',
     processing: 'Processing post',

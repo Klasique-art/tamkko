@@ -61,6 +61,7 @@ export default function CommunityTab() {
     const [isLoading, setIsLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [publicRooms, setPublicRooms] = useState<VipRoom[]>([]);
+    const [publicRoomsOffset, setPublicRoomsOffset] = useState(0);
     const [creatorRooms, setCreatorRooms] = useState<VipRoom[]>([]);
     const [creatorCursor, setCreatorCursor] = useState<string | null>(null);
     const [loadingMoreCreated, setLoadingMoreCreated] = useState(false);
@@ -90,11 +91,13 @@ export default function CommunityTab() {
             };
 
             setPublicRooms(nextPublicRooms);
+            setPublicRoomsOffset(nextPublicRooms.length > 0 ? Math.floor(Math.random() * nextPublicRooms.length) : 0);
             setCreatorRooms(nextCreatorRooms);
             setCreatorCursor(nextCreatorRoomsRes.nextCursor);
             setOverview(nextOverview);
         } catch {
             setPublicRooms([]);
+            setPublicRoomsOffset(0);
             setCreatorRooms([]);
             setCreatorCursor(null);
             setOverview({ publicRooms: 0, joinedRooms: 0, onlineNow: 0, activeCreators: 0 });
@@ -115,6 +118,13 @@ export default function CommunityTab() {
         ],
         []
     );
+
+    const discoverPublicRooms = useMemo(() => {
+        if (publicRooms.length <= 5) return publicRooms;
+        const offset = publicRoomsOffset % publicRooms.length;
+        const rotated = [...publicRooms.slice(offset), ...publicRooms.slice(0, offset)];
+        return rotated.slice(0, 5);
+    }, [publicRooms, publicRoomsOffset]);
 
     const handleOpenRoom = useCallback((roomId: string) => {
         void Haptics.selectionAsync();
@@ -234,7 +244,7 @@ export default function CommunityTab() {
                             </AppText>
                         </View>
                     ) : (
-                        publicRooms.slice(0, 5).map((room) => <RoomPreviewCard key={room.id} room={room} onPress={handleOpenRoom} />)
+                        discoverPublicRooms.map((room) => <RoomPreviewCard key={room.id} room={room} onPress={handleOpenRoom} />)
                     )}
                 </View>
 
