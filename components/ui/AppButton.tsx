@@ -7,7 +7,7 @@ import { useColors } from '@/config/colors';
 
 
 import AppText from '@/components/ui/AppText';
-type ButtonVariant = 'primary' | 'secondary' | 'outline' | 'danger' | 'ghost';
+type ButtonVariant = 'primary' | 'secondary' | 'outline' | 'danger' | 'ghost' | 'accent';
 type ButtonSize = 'sm' | 'md' | 'lg';
 
 interface AppButtonProps extends TouchableOpacityProps {
@@ -43,7 +43,7 @@ const AppButton: React.FC<AppButtonProps> = ({
             alignItems: 'center',
             justifyContent: 'center',
             borderRadius: 12,
-            borderWidth: variant === 'outline' ? 2 : 0,
+            borderWidth: variant === 'outline' || variant === 'accent' ? 2 : 0,
         };
 
         // Size styles
@@ -70,6 +70,15 @@ const AppButton: React.FC<AppButtonProps> = ({
             },
             ghost: {
                 backgroundColor: 'transparent',
+            },
+            accent: {
+                backgroundColor: colors.accent,
+                borderColor: colors.accent100,
+                shadowColor: colors.accent,
+                shadowOpacity: 0.2,
+                shadowRadius: 8,
+                shadowOffset: { width: 0, height: 3 },
+                elevation: 3,
             },
         };
 
@@ -100,6 +109,7 @@ const AppButton: React.FC<AppButtonProps> = ({
             outline: { color: colors.textPrimary },
             danger: { color: colors.white },
             ghost: { color: colors.accent },
+            accent: { color: colors.white },
         };
 
         return {

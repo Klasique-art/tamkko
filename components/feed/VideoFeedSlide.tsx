@@ -295,7 +295,7 @@ function VideoFeedSlide({
                 <VideoActionRail
                     likesCount={item.likesCount}
                     commentsCount={item.commentsCount}
-                    sharesCount={Math.max(12, Math.floor(item.likesCount * 0.04))}
+                    sharesCount={item.sharesCount ?? 0}
                     allowComments={item.allowComments !== false}
                     isLiked={item.isLiked}
                     onLike={triggerLike}
@@ -330,6 +330,7 @@ export default memo(VideoFeedSlide, (prev, next) =>
     prev.item.isLiked === next.item.isLiked &&
     prev.item.likesCount === next.item.likesCount &&
     prev.item.commentsCount === next.item.commentsCount &&
+    prev.item.sharesCount === next.item.sharesCount &&
     prev.item.caption === next.item.caption &&
     prev.item.creatorUsername === next.item.creatorUsername &&
     prev.item.videoSource === next.item.videoSource &&

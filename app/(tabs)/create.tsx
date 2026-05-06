@@ -1,12 +1,15 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { CameraView, useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
+import * as Haptics from 'expo-haptics';
+import * as FileSystem from 'expo-file-system/legacy';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
+import { trim } from 'react-native-video-trim';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import * as VideoThumbnails from 'expo-video-thumbnails';
 import React from 'react';
-import { Alert, PanResponder, Pressable, ScrollView, TextInput, View } from 'react-native';
+import { AccessibilityInfo, Alert, PanResponder, Pressable, ScrollView, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
@@ -44,6 +47,32 @@ const toBackendVisibility = (value: CreateDraft['visibility']): 'public' | 'paid
     return value;
 };
 
+const inferVideoMimeType = (fileName?: string | null, uri?: string) => {
+    const source = `${fileName ?? ''}${uri ?? ''}`.toLowerCase();
+    if (source.endsWith('.mov')) return 'video/quicktime';
+    if (source.endsWith('.webm')) return 'video/webm';
+    if (source.endsWith('.m4v')) return 'video/x-m4v';
+    return 'video/mp4';
+};
+
+const ensureVideoFileName = (fileName?: string | null, uri?: string) => {
+    if (fileName && fileName.trim().length > 0) return fileName.trim();
+    const fromUri = uri?.split('/').pop()?.split('?')[0];
+    if (fromUri && fromUri.trim().length > 0) return fromUri.trim();
+    return `tamkko_${Date.now()}.mp4`;
+};
+
+const resolveFileSizeBytes = async (uri: string, knownSize?: number | null) => {
+    if (Number.isFinite(knownSize) && Number(knownSize) > 0) return Number(knownSize);
+    try {
+        const info = await FileSystem.getInfoAsync(uri, { size: true });
+        if (info.exists && typeof (info as { size?: number }).size === 'number' && (info as { size?: number }).size! > 0) {
+            return (info as { size?: number }).size as number;
+        }
+    } catch {}
+    return 0;
+};
+
 export default function CreateTab() {
     const colors = useColors();
     const insets = useSafeAreaInsets();
@@ -55,6 +84,20 @@ export default function CreateTab() {
     const [uploadProgress, setUploadProgress] = React.useState(0);
     const [uploadStage, setUploadStage] = React.useState<'preparing' | 'uploading' | 'processing' | 'done'>('preparing');
     const [isUploading, setIsUploading] = React.useState(false);
+    const [isTrimmingForUpload, setIsTrimmingForUpload] = React.useState(false);
+    const [isProcessingPending, setIsProcessingPending] = React.useState(false);
+    const [isCheckingProcessing, setIsCheckingProcessing] = React.useState(false);
+    const [isCancellingUpload, setIsCancellingUpload] = React.useState(false);
+    const pendingVideoUploadRef = React.useRef<{
+        postId: string;
+        uploadId: string;
+        caption?: string;
+        visibility: 'public' | 'paid' | 'followers_only' | 'private';
+        allowComments: boolean;
+        price: number | null;
+    } | null>(null);
+    const activeTusUploadRef = React.useRef<any>(null);
+    const didCancelUploadRef = React.useRef(false);
 
     const [isCameraOpen, setIsCameraOpen] = React.useState(false);
     const [isRecording, setIsRecording] = React.useState(false);
@@ -66,6 +109,8 @@ export default function CreateTab() {
     const [trimEndSeconds, setTrimEndSeconds] = React.useState(CREATE_MAX_RECORDING_SECONDS);
     const [trimFrameUris, setTrimFrameUris] = React.useState<string[]>([]);
     const [trimTrackWidth, setTrimTrackWidth] = React.useState(1);
+    const [activeTrimHandle, setActiveTrimHandle] = React.useState<'start' | 'end' | null>(null);
+    const activeTrimHandleRef = React.useRef<'start' | 'end' | null>(null);
 
     const cameraRef = React.useRef<CameraView | null>(null);
     const recordingStartedAtRef = React.useRef<number | null>(null);
@@ -99,9 +144,9 @@ export default function CreateTab() {
 
     const maxTrimSeconds = React.useMemo(() => {
         if (draft.media?.type !== 'video') return CREATE_MAX_RECORDING_SECONDS;
-        if (draft.media.durationMs) return resolveVideoTrimSeconds(draft.media.durationMs);
+        if (draft.media.durationMs) return Math.max(1, Math.round(draft.media.durationMs / 1000));
         const fromPlayer = Math.round(videoPlayer.duration || 0);
-        if (fromPlayer > 0) return Math.max(1, Math.min(CREATE_MAX_RECORDING_SECONDS, fromPlayer));
+        if (fromPlayer > 0) return Math.max(1, fromPlayer);
         return CREATE_MAX_RECORDING_SECONDS;
     }, [draft.media, resolveVideoTrimSeconds, videoPlayer.duration]);
 
@@ -151,6 +196,7 @@ export default function CreateTab() {
         const result = await ImagePicker.launchImageLibraryAsync({
             mediaTypes: ['images', 'videos'],
             allowsMultipleSelection: false,
+            allowsEditing: true,
             quality: 0.85,
             videoMaxDuration: CREATE_MAX_RECORDING_SECONDS,
         });
@@ -160,10 +206,7 @@ export default function CreateTab() {
         const asset = result.assets[0];
         if (!asset) return;
 
-        if (asset.type === 'video' && (asset.duration ?? 0) > CREATE_MAX_RECORDING_SECONDS * 1000) {
-            showToast(`Please select a video up to ${CREATE_MAX_RECORDING_SECONDS} seconds.`, { variant: 'warning' });
-            return;
-        }
+        const isLongVideo = asset.type === 'video' && (asset.duration ?? 0) > CREATE_MAX_RECORDING_SECONDS * 1000;
 
         let thumbnailUri: string | undefined;
         if (asset.type === 'video') {
@@ -192,6 +235,12 @@ export default function CreateTab() {
                     ? resolveVideoTrimSeconds(asset.duration ?? undefined)
                     : CREATE_MAX_RECORDING_SECONDS,
         }));
+        if (isLongVideo) {
+            showToast(`Selected video is still over ${CREATE_MAX_RECORDING_SECONDS}s. Re-pick and trim in the editor before continuing.`, { variant: 'warning' });
+            AccessibilityInfo.announceForAccessibility(
+                `Video is still longer than ${CREATE_MAX_RECORDING_SECONDS} seconds. Re-pick and trim before publishing.`
+            );
+        }
 
     };
 
@@ -311,59 +360,61 @@ export default function CreateTab() {
         };
     }, []);
 
-    const startHandlePanResponder = React.useMemo(
+    const trimDragPanResponder = React.useMemo(
         () =>
             PanResponder.create({
-                onStartShouldSetPanResponder: () => true,
-                onMoveShouldSetPanResponder: () => true,
+                onStartShouldSetPanResponder: () => activeTrimHandleRef.current !== null,
+                onMoveShouldSetPanResponder: () => activeTrimHandleRef.current !== null,
                 onPanResponderGrant: () => {
-                    startDragOriginRef.current = trimStartSeconds;
+                    startDragOriginRef.current = trimStartRef.current;
+                    endDragOriginRef.current = trimEndRef.current;
                 },
                 onPanResponderMove: (_, gestureState) => {
                     const deltaSeconds = (gestureState.dx / trimTrackWidth) * maxTrimSeconds;
-                    const nextStart = clampTrim(
-                        startDragOriginRef.current + deltaSeconds,
-                        0,
-                        trimEndRef.current - MIN_TRIM_WINDOW_SECONDS
-                    );
-                    applyTrim(nextStart, trimEndRef.current);
+                    if (activeTrimHandleRef.current === 'start') {
+                        const nextStart = clampTrim(
+                            startDragOriginRef.current + deltaSeconds,
+                            0,
+                            trimEndRef.current - MIN_TRIM_WINDOW_SECONDS
+                        );
+                        applyTrim(nextStart, trimEndRef.current);
+                    } else if (activeTrimHandleRef.current === 'end') {
+                        const nextEnd = clampTrim(
+                            endDragOriginRef.current + deltaSeconds,
+                            trimStartRef.current + MIN_TRIM_WINDOW_SECONDS,
+                            maxTrimSeconds
+                        );
+                        applyTrim(trimStartRef.current, nextEnd);
+                    } else {
+                        return;
+                    }
                 },
                 onPanResponderRelease: () => {
                     commitTrimDurationToDraft(trimStartRef.current, trimEndRef.current);
+                    activeTrimHandleRef.current = null;
+                    setActiveTrimHandle(null);
                 },
                 onPanResponderTerminate: () => {
                     commitTrimDurationToDraft(trimStartRef.current, trimEndRef.current);
+                    activeTrimHandleRef.current = null;
+                    setActiveTrimHandle(null);
                 },
             }),
-        [applyTrim, clampTrim, commitTrimDurationToDraft, maxTrimSeconds, trimStartSeconds, trimTrackWidth]
+        [applyTrim, clampTrim, commitTrimDurationToDraft, maxTrimSeconds, trimTrackWidth]
     );
 
-    const endHandlePanResponder = React.useMemo(
-        () =>
-            PanResponder.create({
-                onStartShouldSetPanResponder: () => true,
-                onMoveShouldSetPanResponder: () => true,
-                onPanResponderGrant: () => {
-                    endDragOriginRef.current = trimEndSeconds;
-                },
-                onPanResponderMove: (_, gestureState) => {
-                    const deltaSeconds = (gestureState.dx / trimTrackWidth) * maxTrimSeconds;
-                    const nextEnd = clampTrim(
-                        endDragOriginRef.current + deltaSeconds,
-                        trimStartRef.current + MIN_TRIM_WINDOW_SECONDS,
-                        maxTrimSeconds
-                    );
-                    applyTrim(trimStartRef.current, nextEnd);
-                },
-                onPanResponderRelease: () => {
-                    commitTrimDurationToDraft(trimStartRef.current, trimEndRef.current);
-                },
-                onPanResponderTerminate: () => {
-                    commitTrimDurationToDraft(trimStartRef.current, trimEndRef.current);
-                },
-            }),
-        [applyTrim, clampTrim, commitTrimDurationToDraft, maxTrimSeconds, trimEndSeconds, trimTrackWidth]
-    );
+    const armTrimHandle = React.useCallback(async (handle: 'start' | 'end') => {
+        activeTrimHandleRef.current = handle;
+        setActiveTrimHandle(handle);
+        try {
+            await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+        } catch {}
+        AccessibilityInfo.announceForAccessibility(
+            handle === 'start'
+                ? 'Start trim handle selected. Drag left or right to trim.'
+                : 'End trim handle selected. Drag left or right to trim.'
+        );
+    }, [trimTrackWidth]);
 
     React.useEffect(() => {
         if (draft.media?.type !== 'video' || !previewVideoUri) return;
@@ -425,11 +476,56 @@ export default function CreateTab() {
     }, [draft.media?.type, previewVideoUri, maxTrimSeconds]);
 
     const handlePublish = async () => {
-        if (isUploading) return;
+        if (isUploading || isProcessingPending) return;
 
         if (!draft.media) {
             showToast('Select media before publishing.', { variant: 'warning' });
             return;
+        }
+        let mediaForUpload = draft.media;
+        if (draft.media.type === 'video') {
+            const originalDurationSeconds = Math.ceil((draft.media.durationMs ?? 0) / 1000);
+            const trimWindowSeconds = Math.max(MIN_TRIM_WINDOW_SECONDS, trimEndRef.current - trimStartRef.current);
+            const shouldExportTrimmedFile =
+                originalDurationSeconds > CREATE_MAX_RECORDING_SECONDS ||
+                trimStartRef.current > 0.05 ||
+                Math.abs(trimWindowSeconds - originalDurationSeconds) > 0.25;
+
+            if (shouldExportTrimmedFile) {
+                try {
+                    setIsTrimmingForUpload(true);
+                    console.log('[video-trim] export-start', {
+                        source_uri: draft.media.uri,
+                        start_seconds: Number(trimStartRef.current.toFixed(2)),
+                        end_seconds: Number(trimEndRef.current.toFixed(2)),
+                        duration_seconds: Number(trimWindowSeconds.toFixed(2)),
+                    });
+                    const trimResult = await trim(draft.media.uri, {
+                        startTime: Math.max(0, Math.floor(trimStartRef.current * 1000)),
+                        endTime: Math.max(1, Math.floor(trimEndRef.current * 1000)),
+                    });
+                    const outputUri = trimResult.outputPath.startsWith('file://')
+                        ? trimResult.outputPath
+                        : `file://${trimResult.outputPath}`;
+                    mediaForUpload = {
+                        ...draft.media,
+                        uri: outputUri,
+                        durationMs: Number(trimResult.duration ?? Math.round(trimWindowSeconds * 1000)),
+                    };
+                    console.log('[video-trim] export-success', {
+                        output_uri: outputUri,
+                        duration_ms: trimResult.duration,
+                    });
+                } catch (trimError: any) {
+                    console.log('[video-trim] export-error', {
+                        message: typeof trimError?.message === 'string' ? trimError.message : 'Trim export failed',
+                    });
+                    showToast('Could not prepare trimmed video. Please try trimming again.', { variant: 'error' });
+                    return;
+                } finally {
+                    setIsTrimmingForUpload(false);
+                }
+            }
         }
         const isPaid = draft.visibility === 'premium';
         let paidPriceFromProfile: number | null = null;
@@ -456,13 +552,24 @@ export default function CreateTab() {
             }
         }
 
-        if (draft.media?.type === 'video') {
+        if (mediaForUpload?.type === 'video') {
             commitTrimDurationToDraft(trimStartRef.current, trimEndRef.current);
         }
 
         setIsUploading(true);
         setUploadProgress(0);
         setUploadStage('preparing');
+        const uploadStartedAt = new Date().toISOString();
+        const uploadTraceId = `upl_${Date.now()}`;
+        console.log('[video-upload] start', {
+            trace_id: uploadTraceId,
+            started_at: uploadStartedAt,
+            media_type: draft.media.type,
+            media_uri: draft.media.uri,
+            file_name: draft.media.fileName ?? null,
+            file_size: draft.media.fileSize ?? null,
+            duration_ms: draft.media.durationMs ?? null,
+        });
 
         try {
             let uploadedVideo:
@@ -479,32 +586,192 @@ export default function CreateTab() {
                 }
                 | null = null;
 
-            if (draft.media.type === 'video') {
-                setUploadProgress(0.12);
-                const init = await postPublishingService.initVideoUpload({
-                    title: draft.caption.trim() || 'Creator Upload Draft',
-                    description: draft.caption.trim() || undefined,
-                    tags: [],
-                    category: 'general',
-                });
+            if (mediaForUpload.type === 'video') {
+                const fileName = ensureVideoFileName(mediaForUpload.fileName, mediaForUpload.uri);
+                const mimeType = inferVideoMimeType(fileName, mediaForUpload.uri);
+                const fileSizeBytes = await resolveFileSizeBytes(mediaForUpload.uri, mediaForUpload.fileSize);
+                const durationSeconds = Math.max(1, Math.ceil(draft.trimDurationSeconds || 0));
+                if (!fileSizeBytes) {
+                    throw new Error('Unable to determine video file size.');
+                }
+                const maxUploadAttempts = 2;
+                const stallTimeoutMs = 60000;
+                let attemptIndex = 0;
 
-                setUploadStage('uploading');
-                setUploadProgress(0.38);
-                await postPublishingService.uploadVideoToMux({
-                    uploadUrl: init.upload_url,
-                    fileUri: draft.media.uri,
-                    fileName: draft.media.fileName,
-                    fileSize: draft.media.fileSize,
-                    onProgress: (progress) => {
-                        // Keep upload stage progress mapped into a visible mid-range.
-                        setUploadProgress(0.2 + progress * 0.55);
-                    },
-                });
-                uploadedVideo = { post_id: init.post_id, upload_id: init.upload_id };
+                while (attemptIndex < maxUploadAttempts) {
+                    attemptIndex += 1;
+                    setUploadProgress(0.12);
+                    const initStartedAtMs = Date.now();
+                    const init = await postPublishingService.initVideoUpload({
+                        title: draft.caption.trim() || 'Creator Upload Draft',
+                        description: draft.caption.trim() || undefined,
+                        tags: [],
+                        category: 'general',
+                        mime_type: mimeType,
+                        file_name: fileName,
+                        file_size_bytes: fileSizeBytes,
+                        duration_seconds: durationSeconds,
+                    });
+                pendingVideoUploadRef.current = {
+                    postId: init.post_id,
+                    uploadId: init.upload_id,
+                    caption: draft.caption.trim() || undefined,
+                    visibility: toBackendVisibility(draft.visibility),
+                    allowComments: draft.allowComments,
+                    price: isPaid ? paidPriceFromProfile : null,
+                };
+                    console.log('[video-upload] init-success', {
+                        trace_id: uploadTraceId,
+                        attempt: attemptIndex,
+                        init_elapsed_ms: Date.now() - initStartedAtMs,
+                        post_id: init.post_id,
+                        upload_id: init.upload_id,
+                        upload_url: init.upload_url,
+                        init_status: init.status,
+                    });
 
-                setUploadStage('processing');
-                setUploadProgress(0.72);
-                await postPublishingService.waitForVideoReady(init.post_id);
+                    try {
+                        setUploadStage('uploading');
+                        setUploadProgress(0.38);
+                        let lastProgressAtMs = Date.now();
+                        let firstByteLogged = false;
+                        let uploadStalled = false;
+                        const loggedMilestones = new Set<number>();
+                        const logMilestone = (milestone: number) => {
+                            if (loggedMilestones.has(milestone)) return;
+                            loggedMilestones.add(milestone);
+                            console.log('[video-upload] progress-milestone', {
+                                trace_id: uploadTraceId,
+                                attempt: attemptIndex,
+                                post_id: init.post_id,
+                                upload_id: init.upload_id,
+                                milestone_percent: milestone,
+                                at: new Date().toISOString(),
+                            });
+                        };
+
+                        const stallTimer = setInterval(() => {
+                            if (Date.now() - lastProgressAtMs <= stallTimeoutMs) return;
+                            uploadStalled = true;
+                            console.log('[video-upload] stalled', {
+                                trace_id: uploadTraceId,
+                                attempt: attemptIndex,
+                                post_id: init.post_id,
+                                upload_id: init.upload_id,
+                                stall_timeout_ms: stallTimeoutMs,
+                            });
+                            try {
+                                activeTusUploadRef.current?.abort?.(true);
+                            } catch {}
+                            clearInterval(stallTimer);
+                        }, 3000);
+
+                        try {
+                        await postPublishingService.uploadVideoToMux({
+                            uploadUrl: init.upload_url,
+                            fileUri: mediaForUpload.uri,
+                            fileName,
+                            mimeType,
+                            fileSize: fileSizeBytes,
+                                onTusUploadCreated: (upload) => {
+                                    activeTusUploadRef.current = upload;
+                                },
+                                onProgress: (progress) => {
+                                    lastProgressAtMs = Date.now();
+                                    setUploadProgress(0.2 + progress * 0.55);
+                                    const pct = Math.floor(progress * 100);
+
+                                    if (!firstByteLogged && pct > 0) {
+                                        firstByteLogged = true;
+                                        console.log('[video-upload] first-progress-byte', {
+                                            trace_id: uploadTraceId,
+                                            attempt: attemptIndex,
+                                            post_id: init.post_id,
+                                            upload_id: init.upload_id,
+                                            at: new Date().toISOString(),
+                                        });
+                                    }
+                                    if (pct >= 25) logMilestone(25);
+                                    if (pct >= 50) logMilestone(50);
+                                    if (pct >= 75) logMilestone(75);
+                                    if (pct >= 100) logMilestone(100);
+                                },
+                            });
+                        } finally {
+                            clearInterval(stallTimer);
+                        }
+                        if (uploadStalled) throw new Error('UPLOAD_STALLED_NO_PROGRESS');
+
+                        console.log('[video-upload] tus-success', {
+                            trace_id: uploadTraceId,
+                            attempt: attemptIndex,
+                            post_id: init.post_id,
+                            upload_id: init.upload_id,
+                            at: new Date().toISOString(),
+                        });
+                        uploadedVideo = { post_id: init.post_id, upload_id: init.upload_id };
+                        activeTusUploadRef.current = null;
+
+                        setUploadStage('processing');
+                        setUploadProgress(0.72);
+                        let firstAssetCreatedLogged = false;
+                        await postPublishingService.waitForVideoReady(init.post_id, {
+                            intervalMs: 1500,
+                            maxAttempts: 60,
+                            onStatus: ({ attempt, status }) => {
+                                console.log('[video-upload] status-poll', {
+                                    trace_id: uploadTraceId,
+                                    attempt,
+                                    post_id: status.post_id,
+                                    upload_id: status.upload_id,
+                                    status: status.status,
+                                    ready_to_stream: status.ready_to_stream,
+                                    error_code: status.error_code ?? null,
+                                });
+                                const anyStatus = status as any;
+                                const processingMetrics = anyStatus.processingMetrics ?? anyStatus.processing_metrics;
+                                const firstAssetCreatedAt =
+                                    processingMetrics?.firstAssetCreatedAt ??
+                                    processingMetrics?.first_asset_created_at ??
+                                    anyStatus.first_asset_created_at ??
+                                    null;
+                                if (!firstAssetCreatedLogged && firstAssetCreatedAt) {
+                                    firstAssetCreatedLogged = true;
+                                    console.log('[video-upload] first-asset-created', {
+                                        trace_id: uploadTraceId,
+                                        post_id: status.post_id,
+                                        upload_id: status.upload_id,
+                                        asset_created_at: firstAssetCreatedAt,
+                                    });
+                                }
+                            },
+                        });
+                        console.log('[video-upload] ready-for-publish', {
+                            trace_id: uploadTraceId,
+                            attempt: attemptIndex,
+                            post_id: init.post_id,
+                            upload_id: init.upload_id,
+                        });
+                        break;
+                    } catch (attemptError: any) {
+                        activeTusUploadRef.current = null;
+                        const codeOrMessage = String(attemptError?.code ?? attemptError?.message ?? '');
+                        const isStall = /UPLOAD_STALLED_NO_PROGRESS/i.test(codeOrMessage);
+                        if (isStall && attemptIndex < maxUploadAttempts) {
+                            console.log('[video-upload] auto-restart-after-stall', {
+                                trace_id: uploadTraceId,
+                                attempt: attemptIndex,
+                                post_id: init.post_id,
+                                upload_id: init.upload_id,
+                            });
+                            try {
+                                await postPublishingService.cancelVideoUpload(init.post_id);
+                            } catch {}
+                            continue;
+                        }
+                        throw attemptError;
+                    }
+                }
             } else {
                 setUploadProgress(0.14);
                 const imageConfig = await postPublishingService.getImageUploadConfig();
@@ -519,11 +786,11 @@ export default function CreateTab() {
                 setUploadStage('uploading');
                 setUploadProgress(0.52);
                 uploadedImage = await postPublishingService.uploadImageToCloudinary({
-                    imageUri: draft.media.uri,
+                    imageUri: mediaForUpload.uri,
                     uploadUrl: imageConfig.upload_url,
                     uploadPreset: imageConfig.upload_preset,
                     folder: imageConfig.folder,
-                    fileName: draft.media.fileName,
+                    fileName: mediaForUpload.fileName,
                 });
             }
 
@@ -539,6 +806,13 @@ export default function CreateTab() {
                     allow_comments: draft.allowComments,
                     price_ghs: isPaid ? paidPriceFromProfile : null,
                 });
+                console.log('[video-upload] publish-success', {
+                    trace_id: uploadTraceId,
+                    post_id: uploadedVideo.post_id,
+                    upload_id: uploadedVideo.upload_id,
+                });
+                pendingVideoUploadRef.current = null;
+                activeTusUploadRef.current = null;
             } else {
                 if (!uploadedImage) throw new Error('Missing image upload metadata.');
                 await postPublishingService.publishPost({
@@ -558,15 +832,44 @@ export default function CreateTab() {
 
             setUploadStage('done');
             setUploadProgress(1);
+            setIsProcessingPending(false);
 
             const creatorHandle = user?.first_name?.trim()
                 ? `@${user.first_name.trim().toLowerCase().replace(/\s+/g, '.')}`
                 : '@creator';
             addCreatedPost({ draft, creatorUsername: creatorHandle });
             showToast('Post published successfully.', { variant: 'success' });
+            console.log('[video-upload] done', {
+                trace_id: uploadTraceId,
+                completed_at: new Date().toISOString(),
+            });
             setDraft(initialDraft);
             router.replace('/(tabs)');
         } catch (error: any) {
+            if (didCancelUploadRef.current) {
+                didCancelUploadRef.current = false;
+                return;
+            }
+            console.log('[video-upload] error', {
+                trace_id: uploadTraceId,
+                message: typeof error?.message === 'string' ? error.message : 'Unknown upload error',
+                code: error?.code ?? null,
+            });
+            const backendErrorCode = error?.response?.data?.error?.code as string | undefined;
+            if (backendErrorCode === 'VIDEO_DURATION_EXCEEDED') {
+                showToast(
+                    `This upload is still over ${CREATE_MAX_RECORDING_SECONDS} seconds at publish time. Save trimming on device first, then upload the trimmed video.`,
+                    { variant: 'error' }
+                );
+                return;
+            }
+            if (/still processing/i.test(String(error?.message ?? '')) && pendingVideoUploadRef.current) {
+                setUploadStage('processing');
+                setUploadProgress((current) => Math.max(0.72, current));
+                setIsProcessingPending(true);
+                showToast('Video is still processing. We will keep checking.', { variant: 'warning' });
+                return;
+            }
             if (
                 error instanceof UploadStatusError &&
                 (error.code === 'UNSUPPORTED_VIDEO_CODEC' || error.code === 'UNSUPPORTED_VIDEO_PROFILE')
@@ -596,8 +899,129 @@ export default function CreateTab() {
             showToast(message, { variant: 'error' });
         } finally {
             setIsUploading(false);
+            setIsCancellingUpload(false);
+            setIsTrimmingForUpload(false);
         }
     };
+
+    const handleCancelVideoUpload = React.useCallback(async () => {
+        const pending = pendingVideoUploadRef.current;
+        if (!pending || isCancellingUpload) return;
+        setIsCancellingUpload(true);
+        didCancelUploadRef.current = true;
+        console.log('[video-upload] cancel-requested', {
+            post_id: pending.postId,
+            upload_id: pending.uploadId,
+        });
+
+        // Immediately reset local UI state so cancel cannot appear stuck.
+        pendingVideoUploadRef.current = null;
+        const uploadToAbort = activeTusUploadRef.current;
+        activeTusUploadRef.current = null;
+        setIsProcessingPending(false);
+        setIsUploading(false);
+        setUploadStage('preparing');
+        setUploadProgress(0);
+        setIsCancellingUpload(false);
+        showToast('Cancelling upload...', { variant: 'info' });
+
+        // Abort local TUS upload and notify backend in background.
+        void (async () => {
+            try {
+                if (uploadToAbort?.abort) {
+                    await Promise.race([
+                        uploadToAbort.abort(true),
+                        new Promise((resolve) => setTimeout(resolve, 2500)),
+                    ]);
+                }
+            } catch {}
+
+            let cancelConfirmed = false;
+            try {
+                const response = await postPublishingService.cancelVideoUpload(pending.postId);
+                cancelConfirmed = response?.cancelled === true;
+                console.log('[video-upload] cancel-response', {
+                    post_id: response?.post_id ?? pending.postId,
+                    upload_id: response?.upload_id ?? pending.uploadId,
+                    status: response?.status ?? null,
+                    cancelled: response?.cancelled ?? null,
+                });
+            } catch (error: any) {
+                console.log('[video-upload] cancel-error', {
+                    post_id: pending.postId,
+                    upload_id: pending.uploadId,
+                    message: typeof error?.message === 'string' ? error.message : 'Cancel request failed',
+                });
+            }
+
+            showToast(
+                cancelConfirmed ? 'Upload cancelled.' : 'Cancel request sent. Please confirm upload status.',
+                { variant: cancelConfirmed ? 'warning' : 'info' }
+            );
+        })();
+    }, [isCancellingUpload, showToast]);
+
+    const checkPendingVideoProcessing = React.useCallback(async () => {
+        const pending = pendingVideoUploadRef.current;
+        if (!pending || isCheckingProcessing) return;
+        setIsCheckingProcessing(true);
+        try {
+            const status = await postPublishingService.getVideoUploadStatus(pending.postId);
+            if (!(status.ready_to_stream || status.status === 'ready')) return;
+
+            await postPublishingService.publishPost({
+                media_type: 'video',
+                upload_id: pending.uploadId,
+                caption: pending.caption,
+                visibility: pending.visibility,
+                allow_comments: pending.allowComments,
+                price_ghs: pending.price,
+            });
+
+            pendingVideoUploadRef.current = null;
+            setIsProcessingPending(false);
+            setUploadStage('done');
+            setUploadProgress(1);
+
+            const creatorHandle = user?.first_name?.trim()
+                ? `@${user.first_name.trim().toLowerCase().replace(/\s+/g, '.')}`
+                : '@creator';
+            addCreatedPost({ draft, creatorUsername: creatorHandle });
+            showToast('Post published successfully.', { variant: 'success' });
+            setDraft(initialDraft);
+            router.replace('/(tabs)');
+        } catch (error: any) {
+            const message = typeof error?.message === 'string' ? error.message : '';
+            if (!/still processing/i.test(message)) {
+                showToast(message || 'Could not confirm processing status.', { variant: 'error' });
+            }
+        } finally {
+            setIsCheckingProcessing(false);
+        }
+    }, [addCreatedPost, draft, isCheckingProcessing, showToast, user?.first_name]);
+
+    React.useEffect(() => {
+        if (!isProcessingPending) return;
+        const timer = setInterval(() => {
+            void checkPendingVideoProcessing();
+        }, 2000);
+        return () => clearInterval(timer);
+    }, [checkPendingVideoProcessing, isProcessingPending]);
+
+    const hasMediaSelected = Boolean(draft.media?.uri);
+    const isVideoDraft = draft.media?.type === 'video';
+    const isTrimDurationValid =
+        !isVideoDraft ||
+        (Number.isFinite(draft.trimDurationSeconds) &&
+            draft.trimDurationSeconds > 0 &&
+            draft.trimDurationSeconds <= CREATE_MAX_RECORDING_SECONDS);
+    const canPublishPost =
+        hasMediaSelected &&
+        isTrimDurationValid &&
+        !isUploading &&
+        !isTrimmingForUpload &&
+        !isProcessingPending &&
+        !isCancellingUpload;
 
     if (isCameraOpen) {
         const remainingSeconds = Math.max(0, CREATE_MAX_RECORDING_SECONDS - recordingElapsedSeconds);
@@ -836,6 +1260,7 @@ export default function CreateTab() {
                                     const width = event.nativeEvent.layout.width;
                                     if (width > 0) setTrimTrackWidth(width);
                                 }}
+                                {...trimDragPanResponder.panHandlers}
                             >
                                 {trimFrameUris.length > 0 ? trimFrameUris.map((uri, index) => (
                                     <Image
@@ -870,37 +1295,61 @@ export default function CreateTab() {
                                                 backgroundColor: 'rgba(0,0,0,0.45)',
                                             }}
                                         />
-                                        <View
-                                            className="absolute bottom-0 top-0 w-1.5 rounded-full"
+                                        <Pressable
+                                            className="absolute bottom-0 top-0 items-center justify-center"
                                             style={{
                                                 left: `${(trimStartSeconds / maxTrimSeconds) * 100}%`,
-                                                marginLeft: -1,
-                                                backgroundColor: colors.accent,
+                                                marginLeft: -13,
+                                                width: 26,
                                             }}
-                                            {...startHandlePanResponder.panHandlers}
+                                            onLongPress={() => void armTrimHandle('start')}
+                                            delayLongPress={220}
                                             accessible
                                             accessibilityRole="adjustable"
                                             accessibilityLabel="Trim start handle"
-                                        />
-                                        <View
-                                            className="absolute bottom-0 top-0 w-1.5 rounded-full"
+                                            accessibilityHint="Long press to pick up, then drag left or right."
+                                            accessibilityState={{ selected: activeTrimHandle === 'start' }}
+                                            hitSlop={{ top: 10, bottom: 10, left: 12, right: 12 }}
+                                        >
+                                            <View
+                                                className="h-full rounded-full"
+                                                style={{
+                                                    width: activeTrimHandle === 'start' ? 4 : 2,
+                                                    backgroundColor: colors.accent,
+                                                }}
+                                            />
+                                        </Pressable>
+                                        <Pressable
+                                            className="absolute bottom-0 top-0 items-center justify-center"
                                             style={{
                                                 left: `${(trimEndSeconds / maxTrimSeconds) * 100}%`,
-                                                marginLeft: -1,
-                                                backgroundColor: colors.accent,
+                                                marginLeft: -13,
+                                                width: 26,
                                             }}
-                                            {...endHandlePanResponder.panHandlers}
+                                            onLongPress={() => void armTrimHandle('end')}
+                                            delayLongPress={220}
                                             accessible
                                             accessibilityRole="adjustable"
                                             accessibilityLabel="Trim end handle"
-                                        />
+                                            accessibilityHint="Long press to pick up, then drag left or right."
+                                            accessibilityState={{ selected: activeTrimHandle === 'end' }}
+                                            hitSlop={{ top: 10, bottom: 10, left: 12, right: 12 }}
+                                        >
+                                            <View
+                                                className="h-full rounded-full"
+                                                style={{
+                                                    width: activeTrimHandle === 'end' ? 4 : 2,
+                                                    backgroundColor: colors.accent,
+                                                }}
+                                            />
+                                        </Pressable>
                                     </>
                                 ) : null}
                             </View>
 
                             <View className="mt-1 flex-row justify-end">
                                 <AppText className="text-xs font-semibold" color={colors.textPrimary}>
-                                    Trimmed Length {formatTrimTime(trimEndSeconds - trimStartSeconds)}
+                                    Video Length {formatTrimTime(maxTrimSeconds)}  Selected Window {formatTrimTime(trimEndSeconds - trimStartSeconds)}
                                 </AppText>
                             </View>
                         </View>
@@ -965,25 +1414,44 @@ export default function CreateTab() {
                     </View>
                 </View>
 
-                {isUploading ? (
+                {isUploading || isProcessingPending ? (
                     <View className="mt-4">
                         <CreateUploadProgress progress={uploadProgress} stage={uploadStage} />
+                        {pendingVideoUploadRef.current ? (
+                            <Pressable
+                                className="mt-3 rounded-xl border px-4 py-3"
+                                style={{ borderColor: colors.error, backgroundColor: colors.backgroundAlt, opacity: isCancellingUpload ? 0.7 : 1 }}
+                                onPress={() => void handleCancelVideoUpload()}
+                                disabled={isCancellingUpload}
+                                accessibilityRole="button"
+                                accessibilityLabel="Cancel video upload"
+                            >
+                                <AppText className="text-center text-sm font-semibold" color={colors.error}>
+                                    {isCancellingUpload ? 'Cancelling...' : 'Cancel Upload'}
+                                </AppText>
+                            </Pressable>
+                        ) : null}
                     </View>
                 ) : null}
 
                 <Pressable
                     className="mt-5 rounded-xl px-4 py-4"
                     style={{
-                        backgroundColor: draft.media && !isUploading ? colors.textPrimary : `${colors.textSecondary}77`,
+                        backgroundColor: canPublishPost ? colors.textPrimary : `${colors.textSecondary}77`,
                     }}
                     onPress={() => void handlePublish()}
-                    disabled={!draft.media || isUploading}
+                    disabled={!canPublishPost}
                     accessibilityRole="button"
                     accessibilityLabel="Publish post"
-                    accessibilityState={{ disabled: !draft.media || isUploading, busy: isUploading }}
+                    accessibilityHint={
+                        !isTrimDurationValid
+                            ? `Trim video to ${CREATE_MAX_RECORDING_SECONDS} seconds or less to publish.`
+                            : undefined
+                    }
+                    accessibilityState={{ disabled: !canPublishPost, busy: isUploading || isTrimmingForUpload || isProcessingPending || isCancellingUpload }}
                 >
                     <AppText className="text-center text-sm font-semibold" color={colors.background}>
-                        {isUploading ? 'Publishing...' : 'Publish Post'}
+                        {isTrimmingForUpload ? 'Preparing Trim...' : isUploading ? 'Publishing...' : isProcessingPending ? 'Processing Video...' : 'Publish Post'}
                     </AppText>
                 </Pressable>
             </ScrollView>

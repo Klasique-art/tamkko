@@ -106,7 +106,16 @@ const guessImageMimeType = (fileName?: string | null, uri?: string) => {
 };
 
 export const postPublishingService = {
-    async initVideoUpload(payload: { title: string; description?: string; tags?: string[]; category?: string }) {
+    async initVideoUpload(payload: {
+        title: string;
+        description?: string;
+        tags?: string[];
+        category?: string;
+        mime_type: string;
+        file_name: string;
+        file_size_bytes: number;
+        duration_seconds: number;
+    }) {
         const response = await client.post<ApiEnvelope<VideoUploadInitResponse>>('/videos/upload-url', payload);
         return unwrapData(response.data);
     },
@@ -118,9 +127,18 @@ export const postPublishingService = {
         mimeType?: string | null;
         fileSize?: number | null;
         onProgress?: (progress: number) => void;
+        onTusUploadCreated?: (upload: tus.Upload) => void;
     }) {
         const fileName = input.fileName ?? `tamkko_${Date.now()}.mp4`;
         const mimeType = input.mimeType ?? 'video/mp4';
+        console.log('[video-upload] tus-start', {
+            upload_url_host: (() => {
+                try { return new URL(input.uploadUrl).host; } catch { return null; }
+            })(),
+            file_name: fileName,
+            mime_type: mimeType,
+            file_size: input.fileSize ?? null,
+        });
 
         const uploadWithTus = () =>
             new Promise<void>((resolve, reject) => {
@@ -145,29 +163,43 @@ export const postPublishingService = {
                             const progress = Math.max(0, Math.min(1, uploadedBytes / totalBytes));
                             input.onProgress?.(progress);
                         },
-                        onError: (error) => reject(error),
-                        onSuccess: () => resolve(),
+                        onError: (error) => {
+                            console.log('[video-upload] tus-error', { message: error?.message ?? 'Unknown TUS error' });
+                            reject(error);
+                        },
+                        onSuccess: () => {
+                            console.log('[video-upload] tus-onsuccess');
+                            resolve();
+                        },
                     }
                 );
+                input.onTusUploadCreated?.(upload);
                 upload.start();
             });
 
         try {
             await uploadWithTus();
         } catch {
+            console.log('[video-upload] fallback-put-start');
             // Fallback for runtimes/environments where TUS may fail unexpectedly.
             const fileResponse = await fetch(input.fileUri);
             const fileBlob = await fileResponse.blob();
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 45000);
             const uploadResponse = await fetch(input.uploadUrl, {
                 method: 'PUT',
                 headers: {
                     'Content-Type': fileBlob.type || mimeType || 'application/octet-stream',
                 },
                 body: fileBlob,
+                signal: controller.signal,
             });
+            clearTimeout(timeout);
             if (!uploadResponse.ok) {
+                console.log('[video-upload] fallback-put-error', { status: uploadResponse.status });
                 throw new Error('Video upload failed.');
             }
+            console.log('[video-upload] fallback-put-success');
             input.onProgress?.(1);
         }
     },
@@ -177,12 +209,20 @@ export const postPublishingService = {
         return unwrapData(response.data);
     },
 
-    async waitForVideoReady(postId: string, options?: { maxAttempts?: number; intervalMs?: number }) {
+    async waitForVideoReady(
+        postId: string,
+        options?: {
+            maxAttempts?: number;
+            intervalMs?: number;
+            onStatus?: (payload: { attempt: number; status: VideoUploadStatusResponse }) => void;
+        }
+    ) {
         const maxAttempts = options?.maxAttempts ?? 40;
         const intervalMs = options?.intervalMs ?? 3000;
 
         for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
             const status = await this.getVideoUploadStatus(postId);
+            options?.onStatus?.({ attempt: attempt + 1, status });
             if (status.ready_to_stream || status.status === 'ready') return status;
             if (status.status === 'failed') {
                 throw new UploadStatusError(
@@ -238,6 +278,16 @@ export const postPublishingService = {
 
     async publishPost(payload: PublishVideoPayload | PublishImagePayload) {
         const response = await client.post<ApiEnvelope<PublishPostResponse>>('/videos/publish', payload);
+        return unwrapData(response.data);
+    },
+
+    async cancelVideoUpload(videoId: string) {
+        const response = await client.post<ApiEnvelope<{
+            post_id: string;
+            upload_id: string;
+            status: 'failed' | 'processing' | 'ready' | string;
+            cancelled: boolean;
+        }>>(`/videos/${videoId}/upload-cancel`);
         return unwrapData(response.data);
     },
 };

@@ -5,6 +5,7 @@ import React from 'react';
 import { Pressable, View, useWindowDimensions } from 'react-native';
 
 import VideoGridTile from '@/components/video/VideoGridTile';
+import AppButton from '@/components/ui/AppButton';
 import AppText from '@/components/ui/AppText';
 import Screen from '@/components/ui/Screen';
 import { useColors } from '@/config/colors';
@@ -117,7 +118,7 @@ export default function ProfileContentManagerScreen() {
     };
 
     return (
-        <Screen title="My Videos" className="pt-2">
+        <Screen title="My Posts" className="pt-2">
             <FlashList
                 data={activeVideos}
                 keyExtractor={(item) => `${activeTab}_${item.id}`}
@@ -147,20 +148,20 @@ export default function ProfileContentManagerScreen() {
                 )}
                 ListHeaderComponent={
                     <View>
-                        <View className="rounded-3xl border p-4" style={{ borderColor: colors.border, backgroundColor: colors.backgroundAlt }}>
-                            <AppText className="text-lg font-black" color={colors.textPrimary}>Content Manager</AppText>
-                            <AppText className="mt-1 text-sm" color={colors.textSecondary}>
+                        <View className="rounded-2xl border p-3" style={{ borderColor: colors.border, backgroundColor: colors.backgroundAlt }}>
+                            <AppText className="text-base font-black" color={colors.textPrimary}>Content Manager</AppText>
+                            <AppText className="mt-0.5 text-xs" color={colors.textSecondary}>
                                 Manage your uploads, paid content, likes, and saved videos in one place.
                             </AppText>
-                            <Pressable
-                                onPress={() => router.push('/video/upload' as Href)}
-                                className="mt-3 rounded-xl border py-3"
-                                style={{ borderColor: colors.border, backgroundColor: colors.background }}
-                                accessibilityRole="button"
+                            <AppButton
+                                title="Upload New Post"
+                                variant="accent"
+                                size="sm"
+                                icon="add-circle-outline"
+                                onClick={() => router.push('/(tabs)/create' as Href)}
+                                style={{ marginTop: 8 }}
                                 accessibilityLabel="Upload a new video"
-                            >
-                                <AppText className="text-center text-sm font-semibold" color={colors.textPrimary}>Upload New Post</AppText>
-                            </Pressable>
+                            />
                         </View>
 
                         <View className="mt-4 flex-row" accessibilityRole="tablist">

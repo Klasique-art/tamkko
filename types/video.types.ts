@@ -13,6 +13,7 @@ export type VideoItem = {
     viewsCount?: number;
     likesCount: number;
     commentsCount: number;
+    sharesCount?: number;
     allowComments?: boolean;
     postVisibility?: VideoPostVisibility;
     createdAt?: string;

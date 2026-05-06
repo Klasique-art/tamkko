@@ -3,6 +3,7 @@ import React from 'react';
 import { Pressable, ScrollView, TextInput, View } from 'react-native';
 
 import { CreateVisibilitySelector } from '@/components/create';
+import AppButton from '@/components/ui/AppButton';
 import AppSwitch from '@/components/ui/AppSwitch';
 import AppText from '@/components/ui/AppText';
 import Screen from '@/components/ui/Screen';
@@ -135,14 +136,14 @@ export default function EditVideoScreen() {
                 </View>
 
                 <View className="mt-4">
-                    <Pressable
-                        onPress={() => void saveChanges()}
+                    <AppButton
+                        title="Save Changes"
+                        variant="accent"
+                        loading={saving}
                         disabled={saving}
-                        className="rounded-xl border py-3"
-                        style={{ borderColor: colors.border, backgroundColor: colors.backgroundAlt, opacity: saving ? 0.7 : 1 }}
-                    >
-                        <AppText className="text-center text-sm font-semibold" color={colors.textPrimary}>{saving ? 'Saving...' : 'Save Changes'}</AppText>
-                    </Pressable>
+                        fullWidth
+                        onClick={() => void saveChanges()}
+                    />
                 </View>
             </ScrollView>
         </Screen>

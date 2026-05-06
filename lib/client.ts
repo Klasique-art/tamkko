@@ -216,11 +216,11 @@ client.interceptors.response.use(
         const message = toReadableError(error);
         const fullUrl = toResolvedRequestUrl(error?.config);
         const dataPreview = toErrorPreview(error?.response?.data);
-        console.log(
-            `[client] request failed (${error?.config?.method?.toUpperCase()} ${fullUrl ?? error?.config?.url}) [status: ${status ?? 'unknown'}]: ${message}`
-        );
-        console.log('[client] request failed response', {
+        console.log('[client] request failed', {
+            method: error?.config?.method?.toUpperCase() ?? null,
+            full_url: fullUrl ?? error?.config?.url ?? null,
             status: status ?? null,
+            message,
             data_preview: dataPreview,
         });
         if (status >= 500 || !status) {

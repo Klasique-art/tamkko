@@ -19,6 +19,7 @@ type BackendMineVideo = {
     caption?: string;
     description?: string;
     media_type?: string;
+    type?: string;
     visibility?: 'public' | 'paid' | 'followers_only' | 'private';
     post_visibility?: 'public' | 'paid' | 'followers_only' | 'private';
     allow_comments?: boolean;
@@ -29,6 +30,8 @@ type BackendMineVideo = {
     views_count?: number;
     likes_count?: number;
     comments_count?: number;
+    shares_count?: number;
+    share_count?: number;
     creator_username?: string;
     playback_url?: string;
     playback_id?: string;
@@ -63,7 +66,13 @@ const mapVisibility = (value?: BackendMineVideo['visibility'] | BackendMineVideo
 const mapMineVideoToItem = (raw: BackendMineVideo): VideoItem => ({
     id: String(raw.id),
     title: String(raw.title ?? raw.name ?? 'Untitled post'),
-    mediaType: raw.media_type === 'image' ? 'image' : 'video',
+    mediaType: (() => {
+        const normalizedType = String(raw.media_type ?? raw.type ?? '').toLowerCase();
+        if (normalizedType === 'image') return 'image';
+        if (normalizedType === 'video') return 'video';
+        const playbackCandidate = raw.playback_url ?? raw.media?.hls_url ?? '';
+        return playbackCandidate ? 'video' : 'image';
+    })(),
     caption: raw.caption ?? raw.description ?? '',
     thumbnailUrl: raw.thumbnail_url ?? raw.media?.thumbnail_url ?? (raw.media as any)?.url ?? undefined,
     playbackUrl: raw.playback_url ?? raw.media?.hls_url ?? undefined,
@@ -72,6 +81,7 @@ const mapMineVideoToItem = (raw: BackendMineVideo): VideoItem => ({
     viewsCount: Number(raw.views_count ?? 0),
     likesCount: Number(raw.likes_count ?? 0),
     commentsCount: Number(raw.comments_count ?? 0),
+    sharesCount: Number(raw.shares_count ?? raw.share_count ?? 0),
     allowComments: raw.allow_comments ?? raw.allowComments ?? true,
     postVisibility: mapVisibility(raw.visibility ?? raw.post_visibility),
     createdAt: raw.created_at ?? undefined,
